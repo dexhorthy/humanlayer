@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -36,8 +37,35 @@ class SlackContactChannel(BaseModel):
     # allowed_responder_ids: list[str] | None
 
 
+class WhatsAppContactChannel(BaseModel):
+    """
+    Router for contacting a user or group via WhatsApp
+    """
+
+    # the phone number to contact
+
+    user_phone_number: str
+
+    # target context for the LLM, e.g. target_context="a dm with the director of engineering"
+    # will update the tool description to
+    # "contact a human in whatsapp in a dm with the director of engineering"
+    #
+    # other examples e.g. "a dm with the user you're assisting"
+    context_about_channel_or_user: str | None = None
+
+    # a twilio token to override the default contact channel
+    # if you use a custom twilio token, ensure your app's
+    # twilio webhook destination is set appropriately so your humanlayer server can receive events
+    twilio_token: str | None = None
+
+
 class ContactChannel(BaseModel):
     slack: SlackContactChannel | None = None
+    whatsapp: WhatsAppContactChannel | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if sum(1 for channel in [self.slack, self.whatsapp] if channel) != 1:
+            raise ValueError("Contact channel requires exactly one channel")
 
 
 class FunctionCallSpec(BaseModel):

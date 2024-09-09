@@ -1,0 +1,6 @@
+# copy to .env
+OPENAI_API_KEY=NA
+OPENAI_API_BASE=http://localhost:8000/v1
+OPENAI_MODEL_NAME=llama3.1
+
+HUMANLAYER_API_KEY=

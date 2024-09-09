@@ -1,4 +1,4 @@
-# CrewAI Example w/ Mistral
+# CrewAI Example w/ Ollama
 
 ## Environment Setup
 
@@ -10,14 +10,12 @@ Your `.env` file should now look like:
 
 ```shell
 # copy to .env
-OPENAI_API_KEY=your-mistral-api-key
-OPENAI_API_BASE=https://api.mistral.ai/v1
-OPENAI_MODEL_NAME=mistral-small
+OPENAI_API_KEY=
+OPENAI_API_BASE=http://localhost:8000/v1
+OPENAI_MODEL_NAME=llama3.1
 
 HUMANLAYER_API_KEY=
 ```
-
-Add `your-mistral-api-key`, just as in the [crewai docs](https://docs.crewai.com/how-to/LLM-Connections/#mistral-api).
 
 If you have a HUMANLAYER_API_KEY, you can set it here as well, but the approval process will fall back to CLI approvals if no API key is set.
 
@@ -44,11 +42,11 @@ pip install -r requirements.txt
 ```
 
 ```
-python crewai_mistral.py
+python crewai_ollama.py
 ```
 
 ### If you prefer docker
 
 ```
-docker compose run examples crewai_mistral.py
+docker compose run examples crewai_ollama.py
 ```
