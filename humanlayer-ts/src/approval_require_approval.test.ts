@@ -261,3 +261,50 @@ test('Humanlayer()#requireApproval() with deny', async () => {
   expect(functions.get).toHaveBeenCalledWith('generated-id')
   expect(ret).toBe('User denied function _fn_ with comment: nope')
 })
+
+test('HumanLayer reject + throw', async () => {
+
+  const mockBackend: any = {
+    functions: jest.fn(),
+    contacts: jest.fn(),
+  }
+
+  const functions: any = {
+    add: jest.fn(),
+    get: jest.fn(),
+  }
+
+  mockBackend.functions.mockReturnValue(functions)
+
+  functions.add.mockReturnValue(null)
+
+  const returnValue: FunctionCall = {
+    run_id: 'generated-id',
+    call_id: 'generated-id',
+    spec: {
+      fn: '_fn_',
+      kwargs: { bar: 'baz' },
+    },
+    status: {
+      requested_at: new Date(),
+      approved: false,
+      comment: 'plz no',
+    },
+  }
+
+  functions.get.mockReturnValue(returnValue)
+
+  const hl = new HumanLayer({
+    onReject: 'throw',
+    backend: mockBackend,
+    genid: (x: string) => 'generated-id',
+    sleep: (x: number) => Promise.resolve(),
+  })
+
+  const mockFunction = jest.fn()
+  const wrapped = hl.requireApproval()(mockFunction)
+
+  await expect(wrapped({ bar: 'baz' })).rejects.toThrow('User denied function _fn_ with comment: plz no')
+
+
+})

@@ -5,7 +5,7 @@ import secrets
 import time
 from enum import Enum
 from functools import wraps
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Literal, TypeVar
 
 from pydantic import BaseModel
 from slugify import slugify
@@ -23,6 +23,8 @@ from humanlayer.core.models import (
 )
 from humanlayer.core.protocol import (
     AgentBackend,
+    HumanLayerException,
+    UserDeniedError,
 )
 
 # Define TypeVars for input and output types
@@ -30,15 +32,6 @@ T = TypeVar("T")
 R = TypeVar("R")
 
 logger = logging.getLogger(__name__)
-
-
-class HumanLayerError(Exception):
-    pass
-
-
-class UserDeniedError(HumanLayerError):
-    pass
-
 
 def genid(prefix: str) -> str:
     return f"{prefix}-{secrets.token_urlsafe(8)}"
@@ -49,7 +42,7 @@ class ApprovalMethod(Enum):
     BACKEND = "backend"
 
 
-class HumanLayerWrapper:
+class _HumanLayerApprovalWrapper:
     def __init__(
         self,
         decorator: Callable[[Any], Callable],
@@ -62,6 +55,11 @@ class HumanLayerWrapper:
     def __call__(self, fn: Callable) -> Callable:
         return self.decorator(fn)
 
+    def __enter__(self) -> None:
+        self.decorator(lambda: None)()
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        pass
 
 class HumanLayer(BaseModel):
     """HumanLayer"""
@@ -75,6 +73,7 @@ class HumanLayer(BaseModel):
     genid: Callable[[str], str] = genid
     sleep: Callable[[int], None] = time.sleep
     contact_channel: ContactChannel | None = None
+    on_reject: Literal["raise", "stringify"] = "stringify"
 
     # convenience for forwarding down to Connection
     api_key: str | None = None
@@ -145,14 +144,14 @@ class HumanLayer(BaseModel):
     def require_approval(
         self,
         contact_channel: ContactChannel | None = None,
-    ) -> HumanLayerWrapper:
+    ) -> _HumanLayerApprovalWrapper:
         def decorator(fn):  # type: ignore
             if self.approval_method is ApprovalMethod.CLI:
                 return self._approve_cli(fn)
 
             return self._approve_with_backend(fn, contact_channel)
 
-        return HumanLayerWrapper(decorator)
+        return _HumanLayerApprovalWrapper(decorator)
 
     def _approve_cli(self, fn: Callable[[T], R]) -> Callable[[T], R | str]:
         """
@@ -183,7 +182,11 @@ class HumanLayer(BaseModel):
                 None,
                 "",
             }:
-                return str(UserDeniedError(f"User denied {fn.__name__} with feedback: {feedback}"))
+                error_message = f"User denied {fn.__name__} with feedback: {feedback}"
+                if self.on_reject == "raise":
+                    raise UserDeniedError(error_message)
+                else:
+                    return error_message
             try:
                 return fn(*args, **kwargs)
             except Exception as e:
@@ -242,22 +245,30 @@ class HumanLayer(BaseModel):
                             and function_call.spec.channel.slack
                             and function_call.spec.channel.slack.context_about_channel_or_user
                         ):
-                            return f"User in {function_call.spec.channel.slack.context_about_channel_or_user} denied {fn.__name__} with message: {function_call.status.comment}"
+                            raise UserDeniedError(f"User in {function_call.spec.channel.slack.context_about_channel_or_user} denied {fn.__name__} with message: {function_call.status.comment}")
                         elif (
                             contact_channel
                             and contact_channel.slack
                             and contact_channel.slack.context_about_channel_or_user
                         ):
-                            return f"User in {contact_channel.slack.context_about_channel_or_user} denied {fn.__name__} with message: {function_call.status.comment}"
+                            raise UserDeniedError(f"User in {contact_channel.slack.context_about_channel_or_user} denied {fn.__name__} with message: {function_call.status.comment}")
                         else:
-                            return f"User denied {fn.__name__} with message: {function_call.status.comment}"
+                            raise UserDeniedError(f"User denied {fn.__name__} with message: {function_call.status.comment}")
             except Exception as e:
                 logger.exception("Error requesting approval")
                 # todo - raise vs. catch behavior - many tool clients handle+wrap errors
                 # but not all of them :rolling_eyes:
-                return f"Error running {fn.__name__}: {e}"
+                if self.on_reject == "raise":
+                    raise 
+                return f"{e}"
 
         return wrapper
+
+    def _return_or_raise(self, message: str) -> str:
+        if self.on_reject == "raise":
+            raise UserDeniedError(message)
+        else:
+            return message
 
     def human_as_tool(
         self,

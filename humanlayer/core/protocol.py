@@ -58,3 +58,7 @@ class AdminBackend:
 
 class HumanLayerException(Exception):
     pass
+
+
+class UserDeniedError(HumanLayerException):
+    pass

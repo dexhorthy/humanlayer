@@ -31,6 +31,7 @@ export class HumanLayer {
   genid: (prefix: string) => string
   sleep: (ms: number) => Promise<void>
   contactChannel?: ContactChannel
+  onReject: 'throw' | 'stringify'
 
   constructor(params?: {
     runId?: string
@@ -40,6 +41,7 @@ export class HumanLayer {
     genid?: (prefix: string) => string
     sleep?: (ms: number) => Promise<void>
     contactChannel?: ContactChannel
+    onReject?: 'throw' | 'stringify'
     apiKey?: string
     apiBaseUrl?: string
   }) {
@@ -51,12 +53,14 @@ export class HumanLayer {
       genid = defaultGenid,
       sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms)),
       contactChannel,
+      onReject = 'stringify',
       apiKey,
       apiBaseUrl,
     } = params || {}
     this.genid = genid
     this.sleep = sleep
     this.contactChannel = contactChannel
+    this.onReject = onReject
 
     // Determine approval method based on environment variables or provided arguments
     const envApprovalMethod = process.env.HUMANLAYER_APPROVAL_METHOD as keyof typeof ApprovalMethod
@@ -175,6 +179,11 @@ ${kwargs.length ? ' with args: ' + JSON.stringify(kwargs, null, 2) : ''}`)
         if (functionCall.status?.approved) {
           return fn(kwargs)
         } else {
+          if (this.onReject === 'throw') {
+            throw new HumanLayerException(
+              `User denied function ${functionCall.spec.fn} with comment: ${functionCall.status?.comment}`,
+            )
+          }
           return `User denied function ${functionCall.spec.fn} with comment: ${functionCall.status?.comment}`
         }
       }
@@ -183,81 +192,6 @@ ${kwargs.length ? ' with args: ' + JSON.stringify(kwargs, null, 2) : ''}`)
     return f
   }
 
-  /**
-   *
-   def human_as_tool(
-   self,
-   contact_channel: ContactChannel | None = None,
-   ) -> Callable[[str], str]:
-   if self.approval_method is ApprovalMethod.CLI:
-   return self._human_as_tool_cli()
-
-   return self._human_as_tool(contact_channel)
-
-   def _human_as_tool_cli(
-   self,
-   ) -> Callable[[str], str]:
-   def contact_human(
-   question: str,
-   ) -> str:
-   """ask a human a question on the CLI"""
-   print(
-   f"""Agent {self.run_id} requests assistance:
-
-   {question}
-   """
-   )
-   feedback = input("Please enter a response: \n\n")
-   return feedback
-
-   return contact_human
-
-   def _human_as_tool(
-   self,
-   contact_channel: ContactChannel | None = None,
-   ) -> Callable[[str], str]:
-   contact_channel = contact_channel or self.contact_channel
-
-   def contact_human(
-   message: str,
-   ) -> str:
-   """contact a human"""
-   assert self.backend is not None
-   call_id = self.genid("human_call")
-
-   contact = HumanContact(
-   run_id=self.run_id,  # type: ignore
-   call_id=call_id,
-   spec=HumanContactSpec(
-   msg=message,
-   channel=contact_channel,
-   ),
-   )
-   self.backend.contacts().add(contact)
-
-   # todo lets do a more async-y websocket soon
-   while True:
-   self.sleep(3)
-   human_contact = self.backend.contacts().get(call_id)
-   if human_contact.status is None:
-   continue
-
-   if human_contact.status.response is not None:
-   return human_contact.status.response
-
-   if contact_channel is None:
-   return contact_human
-
-   if contact_channel.slack:
-   contact_human.__doc__ = "Contact a human via slack and wait for a response"
-   contact_human.__name__ = "contact_human_in_slack"
-   if contact_channel.slack.context_about_channel_or_user:
-   contact_human.__doc__ += f" in {contact_channel.slack.context_about_channel_or_user}"
-   fn_ctx = contact_channel.slack.context_about_channel_or_user.replace(" ", "_")
-   contact_human.__name__ = f"contact_human_in_slack_in_{fn_ctx}"
-
-   return contact_human
-   */
   humanAsTool(contactChannel?: ContactChannel): ({ message }: { message: string }) => Promise<string> {
     if (this.approvalMethod === ApprovalMethod.cli) {
       return this.humanAsToolCli()
