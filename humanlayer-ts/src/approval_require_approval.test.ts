@@ -263,7 +263,6 @@ test('Humanlayer()#requireApproval() with deny', async () => {
 })
 
 test('HumanLayer reject + throw', async () => {
-
   const mockBackend: any = {
     functions: jest.fn(),
     contacts: jest.fn(),
@@ -304,7 +303,7 @@ test('HumanLayer reject + throw', async () => {
   const mockFunction = jest.fn()
   const wrapped = hl.requireApproval()(mockFunction)
 
-  await expect(wrapped({ bar: 'baz' })).rejects.toThrow('User denied function _fn_ with comment: plz no')
-
-
+  await expect(wrapped({ bar: 'baz' })).rejects.toThrow(
+    'User denied function _fn_ with comment: plz no',
+  )
 })

@@ -142,7 +142,7 @@ def test_require_approval_reject_raise() -> None:
     mock_backend.functions.return_value = functions
 
     functions.add.return_value = None
-    
+
     functions.get.return_value = FunctionCall(
         run_id="generated-id",
         call_id="generated-id",
@@ -258,4 +258,4 @@ def test_require_approval_instance_contact_channel() -> None:
     functions.get.assert_called_once_with("generated-id")
     mock_function.assert_called_with(bar="baz")
 
-    
+
