@@ -93,6 +93,9 @@ class AsyncHumanLayer(BaseModel):
                 logger.info("No HUMANLAYER_API_KEY found, defaulting to CLI approval")
                 self.approval_method = ApprovalMethod.CLI
 
+        if self.approval_method == ApprovalMethod.CLI:
+            raise HumanLayerException("CLI approval method is not supported for async HumanLayer")
+
         agent = "agent"
         self.run_id = self.run_id or os.getenv(
             "HUMANLAYER_RUN_ID",
@@ -148,7 +151,7 @@ class AsyncHumanLayer(BaseModel):
             if self.approval_method is ApprovalMethod.CLI:
                 raise HumanLayerException("CLI approval method is not supported for async HumanLayer")
 
-            return await self._approve_with_backend(
+            return self._approve_with_backend(
                 fn=fn,
                 contact_channel=contact_channel,
                 reject_options=reject_options,
@@ -156,7 +159,7 @@ class AsyncHumanLayer(BaseModel):
 
         return AsyncHumanLayerWrapper(decorator)
 
-    async def _approve_with_backend(
+    def _approve_with_backend(
         self,
         fn: Callable[[T], R],
         contact_channel: ContactChannel | None = None,
@@ -219,7 +222,7 @@ class AsyncHumanLayer(BaseModel):
 
         return wrapper
 
-    async def human_as_tool(
+    def human_as_tool(
         self,
         contact_channel: ContactChannel | None = None,
         response_options: list[ResponseOption] | None = None,

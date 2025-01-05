@@ -1,3 +1,3 @@
 export * from './models'
-export * from './approval'
+export { humanlayer, ApprovalMethod } from './approval'
 export * from './cloud'
