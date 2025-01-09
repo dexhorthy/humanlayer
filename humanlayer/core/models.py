@@ -152,6 +152,7 @@ class ResponseOption(BaseModel):
     title: str | None = None
     description: str | None = None
     prompt_fill: str | None = None
+    interactive: bool = False
 
 
 class FunctionCallSpec(BaseModel):
@@ -159,7 +160,9 @@ class FunctionCallSpec(BaseModel):
     kwargs: dict
     channel: ContactChannel | None = None
     reject_options: list[ResponseOption] | None = None
-    state: dict | None = None  # Optional state to be preserved across the request lifecycle
+    state: dict | None = (
+        None  # Optional state to be preserved across the request lifecycle
+    )
 
 
 class FunctionCallStatus(BaseModel):
@@ -167,6 +170,7 @@ class FunctionCallStatus(BaseModel):
     responded_at: datetime | None = None
     approved: bool | None = None
     comment: str | None = None
+    response_option_name: str | None = None
 
     class Approved(BaseModel):
         approved: Literal[True]
@@ -204,9 +208,13 @@ class FunctionCall(BaseModel):
     class Completed(BaseModel):
         call: "FunctionCall"
 
-        def as_completed(self) -> FunctionCallStatus.Approved | FunctionCallStatus.Rejected:
+        def as_completed(
+            self,
+        ) -> FunctionCallStatus.Approved | FunctionCallStatus.Rejected:
             if self.call.status is None:
-                raise ValueError("FunctionCall.Completed.as_completed() called before approval")
+                raise ValueError(
+                    "FunctionCall.Completed.as_completed() called before approval"
+                )
             return self.call.status.as_completed()
 
 
@@ -215,13 +223,16 @@ class HumanContactSpec(BaseModel):
     subject: str | None = None
     channel: ContactChannel | None = None
     response_options: list[ResponseOption] | None = None
-    state: dict | None = None  # Optional state to be preserved across the request lifecycle
+    state: dict | None = (
+        None  # Optional state to be preserved across the request lifecycle
+    )
 
 
 class HumanContactStatus(BaseModel):
     requested_at: datetime | None = None
     responded_at: datetime | None = None
     response: str | None = None
+    response_option_name: str | None = None
 
 
 class HumanContact(BaseModel):
@@ -235,5 +246,7 @@ class HumanContact(BaseModel):
 
         def as_completed(self) -> str:
             if self.contact.status is None or self.contact.status.response is None:
-                raise ValueError("HumanContact.Completed.as_completed() called before response")
+                raise ValueError(
+                    "HumanContact.Completed.as_completed() called before response"
+                )
             return self.contact.status.response

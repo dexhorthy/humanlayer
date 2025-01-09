@@ -8,12 +8,11 @@
 
 ### Running the examples
 
-
 This example in [05-task-classifier.ts](./05-task-classifier.ts) shows how you can use OpenAI to classify emails, and use HumanLayer to review/update
 those classifications either
 
 1. in real time as classifications are processed
-2. after the fact 
+2. after the fact
 
 ```
 Classifying emails...
@@ -36,8 +35,6 @@ Subject: Weekly Newsletter - Tech Industry Updates
 Classification: read_review
 ```
 
-
 ### Roadmap for this example
 
-- multiple labels on a single object - ux on the humanlayer side + 
-
+- multiple labels on a single object - ux on the humanlayer side +

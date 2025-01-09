@@ -4,10 +4,12 @@ import { FunctionCall, FunctionCallStatus, HumanContact, HumanContactStatus } fr
 class HumanLayerCloudConnection {
   apiKey?: string
   apiBaseURL?: string
+  httpTimeoutSeconds: number
 
-  constructor(api_key?: string, api_base_url?: string) {
+  constructor(api_key?: string, api_base_url?: string, http_timeout_seconds: number = 10) {
     this.apiKey = api_key
     this.apiBaseURL = api_base_url
+    this.httpTimeoutSeconds = http_timeout_seconds
 
     if (!this.apiKey) {
       throw new Error('HUMANLAYER_API_KEY is required for cloud approvals')
@@ -25,20 +27,28 @@ class HumanLayerCloudConnection {
     path: string
     body?: any
   }): Promise<Response> {
-    const resp = await fetch(`${this.apiBaseURL}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), this.httpTimeoutSeconds * 1000)
 
-    if (resp.status >= 400) {
-      const err = new HumanLayerException(`${method} ${path} ${resp.status}: ${await resp.text()}`)
-      throw err
+    try {
+      const resp = await fetch(`${this.apiBaseURL}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+
+      if (resp.status >= 400) {
+        const err = new HumanLayerException(`${method} ${path} ${resp.status}: ${await resp.text()}`)
+        throw err
+      }
+      return resp
+    } finally {
+      clearTimeout(timeoutId)
     }
-    return resp
   }
 }
 

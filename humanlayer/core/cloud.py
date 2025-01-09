@@ -3,7 +3,7 @@ import logging
 import os
 
 import requests
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, Field
 
 from humanlayer.core.models import (
     FunctionCall,
@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 class HumanLayerCloudConnection(BaseModel):
     api_key: str | None = None
     api_base_url: str | None = None
+    http_timeout_seconds: int = Field(
+        default_factory=lambda: int(os.getenv("HUMANLAYER_HTTP_TIMEOUT_SECONDS", "10"))
+    )
 
     @model_validator(mode="after")  # type: ignore
     def post_validate(self) -> None:
@@ -43,7 +46,7 @@ class HumanLayerCloudConnection(BaseModel):
             method,
             f"{self.api_base_url}{path}",
             headers={"Authorization": f"Bearer {self.api_key}"},
-            timeout=10,
+            timeout=self.http_timeout_seconds,
             **kwargs,
         )
 
@@ -60,7 +63,9 @@ class CloudFunctionCallStore(AgentStore[FunctionCall, FunctionCallStatus]):
         )
         resp_json = resp.json()
 
-        logger.debug("response %d %s", resp.status_code, json.dumps(resp_json, indent=2))
+        logger.debug(
+            "response %d %s", resp.status_code, json.dumps(resp_json, indent=2)
+        )
 
         HumanLayerException.raise_for_status(resp)
 
@@ -105,7 +110,9 @@ class CloudHumanContactStore(AgentStore[HumanContact, HumanContactStatus]):
         )
         resp_json = resp.json()
 
-        logger.debug("response %d %s", resp.status_code, json.dumps(resp_json, indent=2))
+        logger.debug(
+            "response %d %s", resp.status_code, json.dumps(resp_json, indent=2)
+        )
 
         HumanLayerException.raise_for_status(resp)
 
