@@ -29,6 +29,7 @@ These examples include more end-to-end API examples, using webservers like flask
 - [ts_openai_client](./ts_openai_client) - basic example of HumanLayer using raw OpenAI client and function calling
 - [ts_vercel_ai_sdk](./ts_vercel_ai_sdk) - example showcasing HumanLayer + Vercel AI SDK
 - [ts_langchain](./ts_langchain) - basic example of HumanLayer using LangchainJS
+- [ts_email_classifier](./ts_email_classifier) - basic example of various classification/labeling workflows, using an llm to label emails and then providing sync or async mechanisms for human input on classifications
 
 ### Other LLMs
 

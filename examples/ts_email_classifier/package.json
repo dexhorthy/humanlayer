@@ -6,11 +6,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "example": "tsx --env-file=.env 01-index.ts",
-    "human-as-tool": "tsx --env-file=.env 02-human-as-tool.ts",
-    "human-email": "tsx --env-file=.env 03-human-email.ts",
-    "agent-side": "tsx --env-file=.env 04-agent-side-approvals.ts",
-    "task-classifier": "tsx --env-file=.env 05-task-classifier.ts"
+    "no-humans": "tsx --env-file=.env 01-no-humans.ts",
+    "human-review-sync": "tsx --env-file=.env 02-human-review-sync.ts",
+    "human-review-async": "tsx --env-file=.env 03-human-review-async.ts"
   },
   "repository": {
     "type": "git",
