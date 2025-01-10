@@ -66,7 +66,7 @@ export class HumanLayer {
       apiKey,
       apiBaseUrl,
       verbose = false,
-      httpTimeoutSeconds = parseInt(process.env.HUMANLAYER_HTTP_TIMEOUT_SECONDS || "10"),
+      httpTimeoutSeconds = parseInt(process.env.HUMANLAYER_HTTP_TIMEOUT_SECONDS || '10'),
     } = params || {}
     this.genid = genid
     this.sleep = sleep

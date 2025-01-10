@@ -27,28 +27,20 @@ class HumanLayerCloudConnection {
     path: string
     body?: any
   }): Promise<Response> {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), this.httpTimeoutSeconds * 1000)
+    const resp = await fetch(`${this.apiBaseURL}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
 
-    try {
-      const resp = await fetch(`${this.apiBaseURL}${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      })
-
-      if (resp.status >= 400) {
-        const err = new HumanLayerException(`${method} ${path} ${resp.status}: ${await resp.text()}`)
-        throw err
-      }
-      return resp
-    } finally {
-      clearTimeout(timeoutId)
+    if (resp.status >= 400) {
+      const err = new HumanLayerException(`${method} ${path} ${resp.status}: ${await resp.text()}`)
+      throw err
     }
+    return resp
   }
 }
 

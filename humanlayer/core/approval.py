@@ -9,7 +9,7 @@ from enum import Enum
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from slugify import slugify
 
 from humanlayer.core.cloud import (
@@ -94,11 +94,7 @@ class HumanLayer(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         # infer from API_KEY setting
         if not self.approval_method:
-            if (
-                self.backend is not None
-                or self.api_key
-                or os.getenv("HUMANLAYER_API_KEY")
-            ):
+            if self.backend is not None or self.api_key or os.getenv("HUMANLAYER_API_KEY"):
                 self.approval_method = ApprovalMethod.BACKEND
                 self.backend = self.backend or CloudHumanLayerBackend(
                     connection=HumanLayerCloudConnection(
@@ -200,18 +196,12 @@ class HumanLayer(BaseModel):
 
 {"" if not args else " with args: " + str(args)}"""
             )
-            feedback = input(
-                "Hit ENTER to proceed, or provide feedback to the agent to deny: \n\n"
-            )
+            feedback = input("Hit ENTER to proceed, or provide feedback to the agent to deny: \n\n")
             if feedback not in {
                 None,
                 "",
             }:
-                return str(
-                    UserDeniedError(
-                        f"User denied {fn.__name__} with feedback: {feedback}"
-                    )
-                )
+                return str(UserDeniedError(f"User denied {fn.__name__} with feedback: {feedback}"))
             try:
                 return fn(*args, **kwargs)
             except Exception as e:
@@ -272,14 +262,8 @@ class HumanLayer(BaseModel):
                     return fn(*args, **kwargs)
                 else:
                     if self.verbose:
-                        print(
-                            f"HumanLayer: human denied {fn.__name__} with message: {response.comment}"
-                        )
-                    if (
-                        channel
-                        and channel.slack
-                        and channel.slack.context_about_channel_or_user
-                    ):
+                        print(f"HumanLayer: human denied {fn.__name__} with message: {response.comment}")
+                    if channel and channel.slack and channel.slack.context_about_channel_or_user:
                         return f"User in {channel.slack.context_about_channel_or_user} denied {fn.__name__} with message: {response.comment}"
                     else:
                         return f"User denied {fn.__name__} with message: {response.comment}"
@@ -364,12 +348,8 @@ class HumanLayer(BaseModel):
             contact_human.__doc__ = "Contact a human via slack and wait for a response"
             contact_human.__name__ = "contact_human_in_slack"
             if contact_channel.slack.context_about_channel_or_user:
-                contact_human.__doc__ += (
-                    f" in {contact_channel.slack.context_about_channel_or_user}"
-                )
-                fn_ctx = contact_channel.slack.context_about_channel_or_user.replace(
-                    " ", "_"
-                )
+                contact_human.__doc__ += f" in {contact_channel.slack.context_about_channel_or_user}"
+                fn_ctx = contact_channel.slack.context_about_channel_or_user.replace(" ", "_")
                 contact_human.__name__ = f"contact_human_in_slack_in_{fn_ctx}"
 
         if contact_channel.email:
@@ -405,9 +385,7 @@ class HumanLayer(BaseModel):
 
         # todo lets do a more async-y websocket soon
         if self.verbose and self.approval_method == ApprovalMethod.BACKEND:
-            print(
-                f"HumanLayer: waiting for approval for {spec.fn} via humanlayer cloud"
-            )
+            print(f"HumanLayer: waiting for approval for {spec.fn} via humanlayer cloud")
 
         while True:
             self.sleep(3)
@@ -426,9 +404,7 @@ class HumanLayer(BaseModel):
         """
         create a function call
         """
-        assert self.backend is not None, (
-            "create requires a backend, did you forget your HUMANLAYER_API_KEY?"
-        )
+        assert self.backend is not None, "create requires a backend, did you forget your HUMANLAYER_API_KEY?"
         call_id = call_id or self.genid("call")
         call = FunctionCall(
             run_id=self.run_id,  # type: ignore
@@ -444,9 +420,7 @@ class HumanLayer(BaseModel):
         """
         get a function call
         """
-        assert self.backend is not None, (
-            "get requires a backend, did you forget your HUMANLAYER_API_KEY?"
-        )
+        assert self.backend is not None, "get requires a backend, did you forget your HUMANLAYER_API_KEY?"
         return self.backend.functions().get(call_id)
 
     def respond_to_function_call(
@@ -454,9 +428,7 @@ class HumanLayer(BaseModel):
         call_id: str,
         status: FunctionCallStatus,
     ) -> FunctionCall:
-        assert self.backend is not None, (
-            "respond requires a backend, did you forget your HUMANLAYER_API_KEY?"
-        )
+        assert self.backend is not None, "respond requires a backend, did you forget your HUMANLAYER_API_KEY?"
         return self.backend.functions().respond(call_id, status)
 
     def fetch_human_response(
@@ -466,9 +438,9 @@ class HumanLayer(BaseModel):
         """
         fetch a human response
         """
-        assert self.backend is not None, (
-            "fetch human response requires a backend, did you forget your HUMANLAYER_API_KEY?"
-        )
+        assert (
+            self.backend is not None
+        ), "fetch human response requires a backend, did you forget your HUMANLAYER_API_KEY?"
 
         # if no channel is specified, use this HumanLayer instance's contact channel (if any)
         if spec.channel is None:
@@ -494,9 +466,7 @@ class HumanLayer(BaseModel):
         spec: HumanContactSpec,
         call_id: str | None = None,
     ) -> HumanContact:
-        assert self.backend is not None, (
-            "create requires a backend, did you forget your HUMANLAYER_API_KEY?"
-        )
+        assert self.backend is not None, "create requires a backend, did you forget your HUMANLAYER_API_KEY?"
         call_id = call_id or self.genid("call")
         contact = HumanContact(
             run_id=self.run_id,  # type: ignore
@@ -509,9 +479,9 @@ class HumanLayer(BaseModel):
         self,
         call_id: str,
     ) -> HumanContact:
-        assert self.backend is not None, (
-            "get human response requires a backend, did you forget your HUMANLAYER_API_KEY?"
-        )
+        assert (
+            self.backend is not None
+        ), "get human response requires a backend, did you forget your HUMANLAYER_API_KEY?"
         return self.backend.contacts().get(call_id)
 
     def respond_to_human_contact(
@@ -519,9 +489,7 @@ class HumanLayer(BaseModel):
         call_id: str,
         status: HumanContactStatus,
     ) -> HumanContact:
-        assert self.backend is not None, (
-            "respond requires a backend, did you forget your HUMANLAYER_API_KEY?"
-        )
+        assert self.backend is not None, "respond requires a backend, did you forget your HUMANLAYER_API_KEY?"
         return self.backend.contacts().respond(call_id, status)
 
 

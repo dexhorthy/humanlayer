@@ -1,7 +1,6 @@
-import { HumanLayer } from "humanlayer";
 import { config } from "dotenv";
-import { ChatCompletionTool } from "openai/resources";
-import { ClassifiedEmail, classifyEmail, emails } from "./common";
+import { HumanLayer } from "humanlayer";
+import { ClassifiedEmail, classifyEmail, twoEmailsShuffled } from "./common";
 
 config(); // Load environment variables
 
@@ -15,7 +14,7 @@ async function main() {
     console.log("\nClassifying emails...\n");
     const results: ClassifiedEmail[] = [];
 
-    for (const email of emails) {
+    for (const email of twoEmailsShuffled) {
       const classification = await classifyEmail(email);
       results.push({
         ...email,

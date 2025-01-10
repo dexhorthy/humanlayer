@@ -160,9 +160,7 @@ class FunctionCallSpec(BaseModel):
     kwargs: dict
     channel: ContactChannel | None = None
     reject_options: list[ResponseOption] | None = None
-    state: dict | None = (
-        None  # Optional state to be preserved across the request lifecycle
-    )
+    state: dict | None = None  # Optional state to be preserved across the request lifecycle
 
 
 class FunctionCallStatus(BaseModel):
@@ -212,9 +210,7 @@ class FunctionCall(BaseModel):
             self,
         ) -> FunctionCallStatus.Approved | FunctionCallStatus.Rejected:
             if self.call.status is None:
-                raise ValueError(
-                    "FunctionCall.Completed.as_completed() called before approval"
-                )
+                raise ValueError("FunctionCall.Completed.as_completed() called before approval")
             return self.call.status.as_completed()
 
 
@@ -223,9 +219,7 @@ class HumanContactSpec(BaseModel):
     subject: str | None = None
     channel: ContactChannel | None = None
     response_options: list[ResponseOption] | None = None
-    state: dict | None = (
-        None  # Optional state to be preserved across the request lifecycle
-    )
+    state: dict | None = None  # Optional state to be preserved across the request lifecycle
 
 
 class HumanContactStatus(BaseModel):
@@ -246,7 +240,5 @@ class HumanContact(BaseModel):
 
         def as_completed(self) -> str:
             if self.contact.status is None or self.contact.status.response is None:
-                raise ValueError(
-                    "HumanContact.Completed.as_completed() called before response"
-                )
+                raise ValueError("HumanContact.Completed.as_completed() called before response")
             return self.contact.status.response
