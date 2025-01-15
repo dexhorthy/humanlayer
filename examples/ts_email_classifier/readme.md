@@ -40,8 +40,17 @@ be received by a webhook, and the results will be printed out.
 
 ![human-review-async](./img/human-review-async.png)
 
+### Review Modalities
+
+This example will send review requests through slack but they are also available in the app.humanlayer.dev web -
+
+![review-slack](./img/review-slack.png)
+
+![review-webapp](./img/review-webapp.png)
+
 ### Next Steps
 
 If you're familiar with this example and want to take it further, there are some ideas:
 
 - use the beta "fine tuning" feature to export your human responses for usage in fine-tuning
+- use the `HumanContactSpec` to send emails to humans for review
