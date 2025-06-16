@@ -54,6 +54,7 @@ type ContactChannel = {
   sms?: SMSContactChannel
   whatsapp?: WhatsAppContactChannel
   email?: EmailContactChannel
+  channel_id?: number
 }
 
 type ResponseOption = {

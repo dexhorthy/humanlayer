@@ -9,11 +9,12 @@ For example, when an email is received, HumanLayer will send an EmailPayload to 
 configured webhook endpoint containing the email content and metadata.
 """
 
-from typing import List, Literal, Optional
+from datetime import datetime
+from typing import Annotated, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from humanlayer.core.models import FunctionCall, HumanContact
+from humanlayer.core.models import FunctionCall, FunctionCallStatus, HumanContact, HumanContactStatus
 
 
 class EmailMessage(BaseModel):
@@ -45,13 +46,14 @@ class SlackMessage(BaseModel):
     from_user_id: str
     channel_id: str
     content: str
-    message_id: str
+    message_ts: str
 
 
 class SlackThread(BaseModel):
     thread_ts: str
     channel_id: str
     events: list[SlackMessage]
+    team_id: str
 
 
 class V1Beta2EmailEventReceived(BaseModel):
@@ -76,3 +78,63 @@ class V1Beta2HumanContactCompleted(BaseModel):
     is_test: bool | None = None
     type: Literal["human_contact.completed"] = "human_contact.completed"  # noqa: A003
     event: HumanContact
+
+
+# V1Beta3 Types
+class ConversationCreatedEventPayload(BaseModel):
+    user_message: str
+    contact_channel_id: int | None = None
+    agent_name: str | None = None
+    email: EmailPayload | None = None
+    slack: SlackThread | None = None
+
+
+class V1Beta3ConversationCreated(BaseModel):
+    is_test: bool | None = None
+    type: Literal["conversation.created"] = "conversation.created"  # noqa: A003
+    event: ConversationCreatedEventPayload
+
+
+class ApprovedStatus(FunctionCallStatus):
+    requested_at: datetime
+    responded_at: datetime
+    approved: Literal[True]
+    comment: Optional[str] = None
+
+
+class RejectedStatus(FunctionCallStatus):
+    requested_at: datetime
+    responded_at: datetime
+    approved: Literal[False]
+    comment: str
+
+
+StatusUnion = Annotated[Union[ApprovedStatus, RejectedStatus], Field(discriminator="approved")]
+
+
+class V1Beta3FunctionCallCompletedEvent(FunctionCall):
+    status: StatusUnion
+    contact_channel_id: int | None
+
+
+class V1Beta3FunctionCallCompleted(BaseModel):
+    is_test: Optional[bool] = None
+    type: Literal["function_call.completed"] = "function_call.completed"  # noqa: A003
+    event: V1Beta3FunctionCallCompletedEvent
+
+
+class CompletedHumanContactStatus(HumanContactStatus):
+    requested_at: datetime
+    responded_at: datetime
+    response: str
+
+
+class V1Beta3HumanContactCompletedEvent(HumanContact):
+    status: CompletedHumanContactStatus
+    contact_channel_id: int | None
+
+
+class V1Beta3HumanContactCompleted(BaseModel):
+    is_test: bool | None = None
+    type: Literal["human_contact.completed"] = "human_contact.completed"  # noqa: A003
+    event: V1Beta3HumanContactCompletedEvent

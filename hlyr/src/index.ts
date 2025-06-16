@@ -9,6 +9,7 @@ import { configShowCommand } from './commands/configShow.js'
 import { pingCommand } from './commands/ping.js'
 import { launchCommand } from './commands/launch.js'
 import { alertCommand } from './commands/alert.js'
+import { createCommand } from './commands/create.js'
 import { startDefaultMCPServer, startClaudeApprovalsMCPServer } from './mcp.js'
 import {
   getDefaultConfigPath,
@@ -63,7 +64,7 @@ async function authenticate(printSelectedProject: boolean = false) {
 
 program.name('humanlayer').description('HumanLayer, but on your command-line.').version('0.7.0')
 
-const UNPROTECTED_COMMANDS = ['config', 'login']
+const UNPROTECTED_COMMANDS = ['config', 'login', 'create']
 
 program.hook('preAction', async (thisCmd, actionCmd) => {
   // Get the full command path by traversing up the command hierarchy
@@ -84,6 +85,11 @@ program.hook('preAction', async (thisCmd, actionCmd) => {
     await authenticate(true)
   }
 })
+
+program
+  .command('create <name>')
+  .description('Create a new 12-factor agent project')
+  .action(createCommand)
 
 program
   .command('login')

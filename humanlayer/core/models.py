@@ -149,6 +149,7 @@ class ContactChannel(BaseModel):
     sms: SMSContactChannel | None = None
     whatsapp: WhatsAppContactChannel | None = None
     email: EmailContactChannel | None = None
+    channel_id: int | None = None
 
     def context(self) -> str | None:
         if self.slack:
