@@ -65,7 +65,7 @@ hlyr/templates/typescript/
 
 **File**: `hlyr/src/commands/create.ts` (new file)
 
-**Command Signature**: 
+**Command Signature**:
 - `npx humanlayer create NAME` - Creates new directory
 - `npx humanlayer create .` - Uses current directory
 
@@ -112,7 +112,7 @@ hlyr/templates/typescript/
 
 ### Implementation Order
 1. **Models Update**: Sync v1Beta3 models first
-2. **Template Setup**: Copy and prepare template structure  
+2. **Template Setup**: Copy and prepare template structure
 3. **Build Configuration**: Ensure templates are packaged
 4. **Create Command**: Implement core functionality
 5. **CLI Integration**: Wire up command in main CLI
