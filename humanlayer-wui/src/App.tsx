@@ -5,51 +5,56 @@ import { create } from 'zustand'
 import { Button } from '@/components/ui/button'
 import './App.css'
 import SessionTable from './components/internal/SessionTable'
+import SessionDetail from './components/internal/SessionDetail'
 
 interface StoreState {
   /* Sessions */
   sessions: SessionInfo[]
-  selectedSessionId: string | null
+  focusedSession: SessionInfo | null
+  activeSession: SessionInfo | null
   initSessions: (sessions: SessionInfo[]) => void
-  setSelectedSessionId: (sessionId: string | null) => void
-  selectNextSession: () => void
-  selectPreviousSession: () => void
+  setFocusedSession: (session: SessionInfo | null) => void
+  setActiveSession: (session: SessionInfo | null) => void
+  focusNextSession: () => void
+  focusPreviousSession: () => void
 }
 
 const useStore = create<StoreState>(set => ({
   sessions: [],
-  selectedSessionId: null,
+  focusedSession: null,
+  activeSession: null,
   initSessions: (sessions: SessionInfo[]) => set({ sessions }),
-  setSelectedSessionId: (sessionId: string | null) => set({ selectedSessionId: sessionId }),
-  selectNextSession: () =>
+  setFocusedSession: (session: SessionInfo | null) => set({ focusedSession: session }),
+  setActiveSession: (session: SessionInfo | null) => set({ activeSession: session }),
+  focusNextSession: () =>
     set(state => {
-      const { sessions, selectedSessionId } = state
+      const { sessions, focusedSession } = state
       if (sessions.length === 0) return state
 
-      const currentIndex = selectedSessionId ? sessions.findIndex(s => s.id === selectedSessionId) : -1
+      const currentIndex = focusedSession ? sessions.findIndex(s => s.id === focusedSession.id) : -1
 
-      // If no session is selected or we're at the last session, select the first session
+      // If no session is focused or we're at the last session, focus the first session
       if (currentIndex === -1 || currentIndex === sessions.length - 1) {
-        return { selectedSessionId: sessions[0].id }
+        return { focusedSession: sessions[0] }
       }
 
-      // Select the next session
-      return { selectedSessionId: sessions[currentIndex + 1].id }
+      // Focus the next session
+      return { focusedSession: sessions[currentIndex + 1] }
     }),
-  selectPreviousSession: () =>
+  focusPreviousSession: () =>
     set(state => {
-      const { sessions, selectedSessionId } = state
+      const { sessions, focusedSession } = state
       if (sessions.length === 0) return state
 
-      const currentIndex = selectedSessionId ? sessions.findIndex(s => s.id === selectedSessionId) : -1
+      const currentIndex = focusedSession ? sessions.findIndex(s => s.id === focusedSession.id) : -1
 
-      // If no session is selected or we're at the first session, select the last session
+      // If no session is focused or we're at the first session, focus the last session
       if (currentIndex === -1 || currentIndex === 0) {
-        return { selectedSessionId: sessions[sessions.length - 1].id }
+        return { focusedSession: sessions[sessions.length - 1] }
       }
 
-      // Select the previous session
-      return { selectedSessionId: sessions[currentIndex - 1].id }
+      // Focus the previous session
+      return { focusedSession: sessions[currentIndex - 1] }
     }),
 }))
 
@@ -57,11 +62,13 @@ function App() {
   // const activeSessionId = null;
   // const selectedSessionId = null;
   // const approvals = [];
-  const selectedSessionId = useStore(state => state.selectedSessionId)
+  const focusedSession = useStore(state => state.focusedSession)
+  const activeSession = useStore(state => state.activeSession)
   const sessions = useStore(state => state.sessions)
-  const setSelectedSessionId = useStore(state => state.setSelectedSessionId)
-  const selectNextSession = useStore(state => state.selectNextSession)
-  const selectPreviousSession = useStore(state => state.selectPreviousSession)
+  const setFocusedSession = useStore(state => state.setFocusedSession)
+  const setActiveSession = useStore(state => state.setActiveSession)
+  const focusNextSession = useStore(state => state.focusNextSession)
+  const focusPreviousSession = useStore(state => state.focusPreviousSession)
   const [status, setStatus] = useState('')
   const [approvals, setApprovals] = useState<any[]>([])
   const [activeSessionId] = useState<string | null>(null)
@@ -156,33 +163,21 @@ function App() {
       <main className="container max-w-[80%] mx-auto flex-1 flex flex-col justify-center p-8">
         {connected && (
           <>
-            <div style={{ marginBottom: '20px' }}>
-              <SessionTable
-                sessions={sessions}
-                handleFocusSession={sessionId => setSelectedSessionId(sessionId)}
-                handleBlurSession={() => setSelectedSessionId(null)}
-                selectedSessionId={selectedSessionId}
-                handleSelectNextSession={selectNextSession}
-                handleSelectPreviousSession={selectPreviousSession}
-              />
-              {/*
-              These will return, temporarily commenting out.
+            {activeSession ? (
+              <SessionDetail session={activeSession} onClose={() => setActiveSession(null)} />
+            ) : (
               <div style={{ marginBottom: '20px' }}>
-                <h2>Launch New Session</h2>
-                <input
-                  type="text"
-                  value={query}
-                  onChange={e => setQuery(e.target.value)}
-                  placeholder="Enter your query..."
-                  style={{ width: '300px', marginRight: '10px' }}
+                <SessionTable
+                  sessions={sessions}
+                  handleFocusSession={session => setFocusedSession(session)}
+                  handleBlurSession={() => setFocusedSession(null)}
+                  handleActivateSession={session => setActiveSession(session)}
+                  focusedSession={focusedSession}
+                  handleFocusNextSession={focusNextSession}
+                  handleFocusPreviousSession={focusPreviousSession}
                 />
-                <Button onClick={launchSession}>Launch Session</Button>
               </div>
-
-              <Button onClick={loadSessions} style={{ marginTop: '10px' }}>
-                Refresh Sessions
-              </Button> */}
-            </div>
+            )}
 
             {approvals.length > 0 && (
               <div>
