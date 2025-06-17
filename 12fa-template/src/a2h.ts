@@ -1,4 +1,4 @@
-import { z, ZodSchema } from 'zod';
+import { z, ZodSchema } from "zod";
 
 // Types for A2H API objects matching the new schemas
 
@@ -49,5 +49,6 @@ export type NewConversation = {
 };
 
 // Optionally, you can add union types for future extensibility
-export type A2HEvent<T extends ZodSchema<any> = ZodSchema<any>> = Message<T> | NewConversation;
-
+export type A2HEvent<T extends ZodSchema<any> = ZodSchema<any>> =
+  | Message<T>
+  | NewConversation;

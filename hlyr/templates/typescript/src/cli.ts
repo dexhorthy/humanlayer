@@ -68,7 +68,9 @@ async function askHumanCLI(lastEvent: Event): Promise<Event> {
   switch (lastEvent.data.intent) {
     case 'divide':
       const response = await approveCLI(
-        `agent wants to run ${chalk.green(JSON.stringify(lastEvent.data))}\nPress Enter to approve, or type feedback to cancel:`,
+        `agent wants to run ${chalk.green(
+          JSON.stringify(lastEvent.data),
+        )}\nPress Enter to approve, or type feedback to cancel:`,
       )
       if (response.approved) {
         const thread = new Thread([lastEvent])

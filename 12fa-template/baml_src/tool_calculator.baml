@@ -23,4 +23,3 @@ class DivideTool {
     a int | float
     b int | float
 }
-

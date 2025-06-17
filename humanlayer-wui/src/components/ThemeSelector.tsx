@@ -71,13 +71,10 @@ export function ThemeSelector() {
       >
         {currentTheme?.icon || '⚙'}
       </button>
-      
+
       {isOpen && (
         <>
-          <div 
-            className="fixed inset-0 z-10"
-            onClick={() => setIsOpen(false)}
-          />
+          <div className="fixed inset-0 z-10" onClick={() => setIsOpen(false)} />
           <div className="absolute bottom-full right-0 mb-1 min-w-28 border border-border bg-background z-20">
             {themes.map((themeOption, index) => (
               <button
@@ -87,11 +84,11 @@ export function ThemeSelector() {
                   setIsOpen(false)
                 }}
                 className={`w-full px-2 py-1.5 text-left text-xs font-mono transition-colors flex items-center gap-2 ${
-                  index === selectedIndex 
-                    ? 'bg-accent/20 text-accent' 
-                    : theme === themeOption.value 
-                      ? 'bg-accent/10 text-accent' 
-                      : 'text-foreground hover:bg-accent/5'
+                  index === selectedIndex
+                    ? 'bg-accent/20 text-accent'
+                    : theme === themeOption.value
+                    ? 'bg-accent/10 text-accent'
+                    : 'text-foreground hover:bg-accent/5'
                 }`}
               >
                 <span>{themeOption.icon}</span>

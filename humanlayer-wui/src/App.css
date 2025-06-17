@@ -44,7 +44,7 @@
 
 /* Solarized Dark - Default theme */
 :root,
-[data-theme="solarized-dark"] {
+[data-theme='solarized-dark'] {
   --terminal-bg: #002b36;
   --terminal-bg-alt: #073642;
   --terminal-fg: #839496;
@@ -58,7 +58,7 @@
 }
 
 /* Solarized Light */
-[data-theme="solarized-light"] {
+[data-theme='solarized-light'] {
   --terminal-bg: #fdf6e3;
   --terminal-bg-alt: #eee8d5;
   --terminal-fg: #657b83;
@@ -72,7 +72,7 @@
 }
 
 /* Cappuccino - Warm coffee theme */
-[data-theme="cappuccino"] {
+[data-theme='cappuccino'] {
   --terminal-bg: #2f1b14;
   --terminal-bg-alt: #3d261a;
   --terminal-fg: #d4b895;
@@ -86,7 +86,7 @@
 }
 
 /* Catppuccin Mocha - Popular pastel theme */
-[data-theme="catppuccin"] {
+[data-theme='catppuccin'] {
   --terminal-bg: #1e1e2e;
   --terminal-bg-alt: #313244;
   --terminal-fg: #cdd6f4;
@@ -100,7 +100,7 @@
 }
 
 /* High Contrast - Sharp white on black */
-[data-theme="high-contrast"] {
+[data-theme='high-contrast'] {
   --terminal-bg: #000000;
   --terminal-bg-alt: #1a1a1a;
   --terminal-fg: #ffffff;
@@ -121,9 +121,12 @@
     @apply bg-background text-foreground;
     font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
   }
-  
+
   /* Terminal styling for all elements */
-  input, textarea, select, button {
+  input,
+  textarea,
+  select,
+  button {
     font-family: inherit;
   }
 }

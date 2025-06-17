@@ -26,7 +26,7 @@ function detectBamlVersion(targetDir: string): string | undefined {
         return bamlPackage.version
       }
     }
-    
+
     // Fallback: try to get version from node_modules directly
     const bamlPackagePath = join(targetDir, 'node_modules/@boundaryml/baml/package.json')
     if (existsSync(bamlPackagePath)) {
@@ -36,7 +36,7 @@ function detectBamlVersion(targetDir: string): string | undefined {
   } catch (error) {
     console.log(chalk.yellow('⚠️  Could not detect BAML version, using default'))
   }
-  
+
   return undefined
 }
 

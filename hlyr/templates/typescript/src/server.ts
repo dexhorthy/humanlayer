@@ -107,7 +107,8 @@ const outerLoop = async (req: Request, res: Response) => {
     // add the denial to the thread
     thread.events.push({
       type: 'human_response',
-      data: `user denied operation ${thread.lastEvent().data.intent} with feedback: ${body.event.status?.comment}`,
+      data: `user denied operation ${thread.lastEvent().data.intent} with feedback: ${body.event.status
+        ?.comment}`,
     })
   } else if (body.type === 'human_contact.completed') {
     // add the human response to the thread

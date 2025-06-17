@@ -12,14 +12,13 @@ configured webhook endpoint containing the email content and metadata.
 from datetime import datetime
 from typing import Annotated, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
-
 from app.routers.fl_router.humanlayer_vendored import (
     FunctionCall,
     FunctionCallStatus,
     HumanContact,
     HumanContactStatus,
 )
+from pydantic import BaseModel, Field
 
 
 class EmailMessage(BaseModel):

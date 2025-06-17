@@ -7,7 +7,7 @@ class DoneForNow {
   intent "done_for_now"
 
   message string @description(#"
-    message to send to the user about the work that was done. 
+    message to send to the user about the work that was done.
   "#)
 }
 
@@ -28,7 +28,7 @@ type CalculatorTools = AddTool | SubtractTool | MultiplyTool | DivideTool
 type CustomerSupportTools = ProcessRefund
 
 function DetermineNextStep(
-    thread: string 
+    thread: string
 ) -> HumanTools | CalculatorTools | CustomerSupportTools {
     client "openai/gpt-4o"
 
@@ -164,4 +164,4 @@ test MathOperationPostClarification {
   @@assert(b, {{this.a == 3}})
   @@assert(a, {{this.b == 12}})
 }
-        
+

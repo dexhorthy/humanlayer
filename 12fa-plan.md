@@ -1,8 +1,8 @@
 ## steps
 
 - read the entire example project in ../12-factor-agents/packages/create-12-factor-agent/template
-- read all the api types in ../../metalytics-dev/metalytics/.../humanlayer_vendored* files for webhooks and etc
-- update humanlayer sdk models to match the v1Beta3 models in the humanlayer_vendored* files
+- read all the api types in ../../metalytics-dev/metalytics/.../humanlayer_vendored\* files for webhooks and etc
+- update humanlayer sdk models to match the v1Beta3 models in the humanlayer_vendored\* files
 - create a templates/typescript folder in humanlayer cli repo matching the template in ../12-factor-agents/packages/create-12-factor-agent/template
 - update build steps to include the template in dist/ when shipping the humanlayer cli
 - create a command `npx humanlayer create NAME` or `npx humanlayer create .` that checks for conflicts, makes dir if necessary, and then copies the template to the new repo, and prints instructions
@@ -19,7 +19,8 @@ npx humanlayer create
 
 that follows the basic template in ../12-factor-agents/packages/create-12-factor-agent/template
 
-update the models to match the v1Beta3 models - source of truth is in ../../metalytics-dev/metalytics/.../humanlayer_vendored* files for webhooks and etc
+update the models to match the v1Beta3 models - source of truth is in ../../metalytics-dev/metalytics/.../humanlayer_vendored\* files for webhooks and etc
 
 includes by default:
+
 - typescript

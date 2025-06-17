@@ -36,7 +36,9 @@ function ConversationContent({ sessionId }: { sessionId: string }) {
           <MessageCircleDashed className="w-12 h-12 mx-auto" />
         </div>
         <h3 className="text-lg font-medium text-foreground">No conversation yet</h3>
-        <p className="mt-1 text-sm text-muted-foreground">The conversation will appear here once it starts.</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The conversation will appear here once it starts.
+        </p>
       </div>
     )
   }
@@ -47,7 +49,9 @@ function ConversationContent({ sessionId }: { sessionId: string }) {
         <div key={event.id} className="border-b pb-4">
           <div className="flex items-center gap-2 mb-2">
             <span className="font-medium text-accent">{event.role || event.type}</span>
-            <span className="text-sm text-muted-foreground">{event.timestamp.toLocaleTimeString()}</span>
+            <span className="text-sm text-muted-foreground">
+              {event.timestamp.toLocaleTimeString()}
+            </span>
           </div>
           <p className="whitespace-pre-wrap text-foreground">{event.content}</p>
         </div>
