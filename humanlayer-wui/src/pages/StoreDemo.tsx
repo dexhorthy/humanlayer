@@ -18,28 +18,23 @@ interface AnimationStep {
   delay: number // milliseconds to wait before applying this state
 }
 
-// Store factory that creates a counter store
-function createCounterStore(isDemo: boolean = false): StoreApi<CounterStore> {
+// Real store with working actions
+function createRealCounterStore(): StoreApi<CounterStore> {
   return create<CounterStore>((set) => ({
     count: 0,
-    increment: () => {
-      if (!isDemo) {
-        set(state => ({ count: state.count + 1 }))
-      }
-      // Demo mode: no-op (animations handle updates)
-    },
-    decrement: () => {
-      if (!isDemo) {
-        set(state => ({ count: state.count - 1 }))
-      }
-      // Demo mode: no-op
-    },
-    reset: () => {
-      if (!isDemo) {
-        set({ count: 0 })
-      }
-      // Demo mode: no-op
-    },
+    increment: () => set(state => ({ count: state.count + 1 })),
+    decrement: () => set(state => ({ count: state.count - 1 })),
+    reset: () => set({ count: 0 }),
+  }))
+}
+
+// Demo store with no-op actions (state controlled by animator)
+function createDemoCounterStore(): StoreApi<CounterStore> {
+  return create<CounterStore>(() => ({
+    count: 0,
+    increment: () => {}, // no-op
+    decrement: () => {}, // no-op
+    reset: () => {},     // no-op
   }))
 }
 
@@ -119,7 +114,7 @@ function useCounterStore<T>(selector: (state: CounterStore) => T): T {
 
 // Provider for real store
 function RealStoreProvider({ children }: { children: React.ReactNode }) {
-  const [realStore] = useState(() => createCounterStore(false))
+  const [realStore] = useState(() => createRealCounterStore())
   
   useEffect(() => {
     // Optional: Subscribe to real store for logging
@@ -150,7 +145,7 @@ interface DemoStoreProviderProps {
 }
 
 function DemoStoreProvider({ children, sequence }: DemoStoreProviderProps) {
-  const [demoStore] = useState(() => createCounterStore(true))
+  const [demoStore] = useState(() => createDemoCounterStore())
   const [animator] = useState(() => new DemoAnimator(demoStore, sequence))
   
   useEffect(() => {
