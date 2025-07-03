@@ -21,7 +21,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { useConversation } from '@/hooks/useConversation'
 import { Skeleton } from '../ui/skeleton'
-import { useStore } from '@/AppStore'
+import { useBoundStore } from '@/store'
 import {
   Bot,
   CheckCircle,
@@ -949,7 +949,7 @@ function SessionDetail({ session, onClose }: SessionDetailProps) {
   const [denyingApprovalId, setDenyingApprovalId] = useState<string | null>(null)
   const [focusSource, setFocusSource] = useState<'mouse' | 'keyboard' | null>(null)
   const [isSplitView, setIsSplitView] = useState(true)
-  const interruptSession = useStore(state => state.interruptSession)
+  const interruptSession = useBoundStore(state => state.interruptSession)
   const navigate = useNavigate()
   const isRunning = session.status === 'running'
 
