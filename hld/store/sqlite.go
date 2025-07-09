@@ -104,6 +104,7 @@ func (s *SQLiteStore) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_sessions_claude ON sessions(claude_session_id);
 	CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 	CREATE INDEX IF NOT EXISTS idx_sessions_run_id ON sessions(run_id);
+	CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 
 	-- Single conversation events table
 	CREATE TABLE IF NOT EXISTS conversation_events (
@@ -173,6 +174,28 @@ func (s *SQLiteStore) initSchema() error {
 		applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		description TEXT
 	);
+
+	-- Approvals table for local approvals
+	CREATE TABLE IF NOT EXISTS approvals (
+		id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		responded_at DATETIME,
+
+		-- Tool approval fields
+		tool_name TEXT NOT NULL,
+		tool_input TEXT NOT NULL, -- JSON
+
+		-- Response fields
+		comment TEXT, -- For denial reasons or approval notes
+
+		FOREIGN KEY (session_id) REFERENCES sessions(id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(status) WHERE status = 'pending';
+	CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id);
+	CREATE INDEX IF NOT EXISTS idx_approvals_run_id ON approvals(run_id);
 	`
 
 	if _, err := s.db.Exec(schema); err != nil {
@@ -256,6 +279,120 @@ func (s *SQLiteStore) applyMigrations() error {
 		}
 
 		slog.Info("Migration 3 applied successfully")
+	}
+
+	// Migration 4: Add approvals table for local approvals
+	if currentVersion < 4 {
+		slog.Info("Applying migration 4: Add approvals table for local approvals")
+
+		// Create the approvals table
+		_, err = s.db.Exec(`
+			CREATE TABLE IF NOT EXISTS approvals (
+				id TEXT PRIMARY KEY,
+				run_id TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied')),
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				responded_at DATETIME,
+
+				-- Tool approval fields
+				tool_name TEXT NOT NULL,
+				tool_input TEXT NOT NULL, -- JSON
+
+				-- Response fields
+				comment TEXT, -- For denial reasons or approval notes
+
+				FOREIGN KEY (session_id) REFERENCES sessions(id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_approvals_pending ON approvals(status) WHERE status = 'pending';
+			CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id);
+			CREATE INDEX IF NOT EXISTS idx_approvals_run_id ON approvals(run_id);
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create approvals table: %w", err)
+		}
+
+		// Record migration
+		_, err = s.db.Exec(`
+			INSERT INTO schema_version (version, description)
+			VALUES (4, 'Add approvals table for local approvals')
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to record migration 4: %w", err)
+		}
+
+		slog.Info("Migration 4 applied successfully")
+	}
+
+	// Migration 5: Add index on parent_session_id for efficient tree queries
+	if currentVersion < 5 {
+		slog.Info("Applying migration 5: Add index on parent_session_id")
+
+		// Create index on parent_session_id for efficient child queries
+		_, err = s.db.Exec(`
+			CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create parent_session_id index: %w", err)
+		}
+
+		// Record migration
+		_, err = s.db.Exec(`
+			INSERT INTO schema_version (version, description)
+			VALUES (5, 'Add index on parent_session_id for efficient tree queries')
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to record migration 5: %w", err)
+		}
+
+		slog.Info("Migration 5 applied successfully")
+	}
+
+	// Migration 6: Add parent_tool_use_id for sub-task tracking
+	if currentVersion < 6 {
+		slog.Info("Applying migration 6: Add parent_tool_use_id for sub-task tracking")
+
+		// Check if column already exists (it might be in the schema for new databases)
+		var columnExists int
+		err = s.db.QueryRow(`
+			SELECT COUNT(*) FROM pragma_table_info('conversation_events')
+			WHERE name = 'parent_tool_use_id'
+		`).Scan(&columnExists)
+		if err != nil {
+			return fmt.Errorf("failed to check parent_tool_use_id column: %w", err)
+		}
+
+		// Only add column if it doesn't exist
+		if columnExists == 0 {
+			_, err = s.db.Exec(`
+				ALTER TABLE conversation_events
+				ADD COLUMN parent_tool_use_id TEXT
+			`)
+			if err != nil {
+				return fmt.Errorf("failed to add parent_tool_use_id column: %w", err)
+			}
+		}
+
+		// Create index for efficient parent queries
+		_, err = s.db.Exec(`
+			CREATE INDEX IF NOT EXISTS idx_conversation_parent_tool
+			ON conversation_events(parent_tool_use_id)
+			WHERE parent_tool_use_id IS NOT NULL
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create parent_tool_use_id index: %w", err)
+		}
+
+		// Record migration
+		_, err = s.db.Exec(`
+			INSERT INTO schema_version (version, description)
+			VALUES (6, 'Add parent_tool_use_id for sub-task tracking')
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to record migration 6: %w", err)
+		}
+
+		slog.Info("Migration 6 applied successfully")
 	}
 
 	return nil
@@ -612,16 +749,16 @@ func (s *SQLiteStore) AddConversationEvent(ctx context.Context, event *Conversat
 		INSERT INTO conversation_events (
 			session_id, claude_session_id, sequence, event_type,
 			role, content,
-			tool_id, tool_name, tool_input_json,
+			tool_id, tool_name, tool_input_json, parent_tool_use_id,
 			tool_result_for_id, tool_result_content,
 			is_completed, approval_status, approval_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := tx.ExecContext(ctx, query,
 		event.SessionID, event.ClaudeSessionID, event.Sequence, event.EventType,
 		event.Role, event.Content,
-		event.ToolID, event.ToolName, event.ToolInputJSON,
+		event.ToolID, event.ToolName, event.ToolInputJSON, event.ParentToolUseID,
 		event.ToolResultForID, event.ToolResultContent,
 		event.IsCompleted, event.ApprovalStatus, event.ApprovalID,
 	)
@@ -642,7 +779,7 @@ func (s *SQLiteStore) GetConversation(ctx context.Context, claudeSessionID strin
 	query := `
 		SELECT id, session_id, claude_session_id, sequence, event_type, created_at,
 			role, content,
-			tool_id, tool_name, tool_input_json,
+			tool_id, tool_name, tool_input_json, parent_tool_use_id,
 			tool_result_for_id, tool_result_content,
 			is_completed, approval_status, approval_id
 		FROM conversation_events
@@ -663,7 +800,7 @@ func (s *SQLiteStore) GetConversation(ctx context.Context, claudeSessionID strin
 			&event.ID, &event.SessionID, &event.ClaudeSessionID,
 			&event.Sequence, &event.EventType, &event.CreatedAt,
 			&event.Role, &event.Content,
-			&event.ToolID, &event.ToolName, &event.ToolInputJSON,
+			&event.ToolID, &event.ToolName, &event.ToolInputJSON, &event.ParentToolUseID,
 			&event.ToolResultForID, &event.ToolResultContent,
 			&event.IsCompleted, &event.ApprovalStatus, &event.ApprovalID,
 		)
@@ -741,7 +878,7 @@ func (s *SQLiteStore) GetSessionConversation(ctx context.Context, sessionID stri
 	query := fmt.Sprintf(`
 		SELECT id, session_id, claude_session_id, sequence, event_type, created_at,
 			role, content,
-			tool_id, tool_name, tool_input_json,
+			tool_id, tool_name, tool_input_json, parent_tool_use_id,
 			tool_result_for_id, tool_result_content,
 			is_completed, approval_status, approval_id
 		FROM conversation_events
@@ -764,7 +901,7 @@ func (s *SQLiteStore) GetSessionConversation(ctx context.Context, sessionID stri
 			&event.ID, &event.SessionID, &event.ClaudeSessionID,
 			&event.Sequence, &event.EventType, &event.CreatedAt,
 			&event.Role, &event.Content,
-			&event.ToolID, &event.ToolName, &event.ToolInputJSON,
+			&event.ToolID, &event.ToolName, &event.ToolInputJSON, &event.ParentToolUseID,
 			&event.ToolResultForID, &event.ToolResultContent,
 			&event.IsCompleted, &event.ApprovalStatus, &event.ApprovalID,
 		)
@@ -1101,6 +1238,154 @@ func (s *SQLiteStore) StoreRawEvent(ctx context.Context, sessionID string, event
 	if err != nil {
 		return fmt.Errorf("failed to store raw event: %w", err)
 	}
+	return nil
+}
+
+// CreateApproval creates a new approval
+func (s *SQLiteStore) CreateApproval(ctx context.Context, approval *Approval) error {
+	// Validate status
+	if !approval.Status.IsValid() {
+		return fmt.Errorf("invalid approval status: %s", approval.Status)
+	}
+
+	query := `
+		INSERT INTO approvals (
+			id, run_id, session_id, status, created_at,
+			tool_name, tool_input
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		approval.ID, approval.RunID, approval.SessionID, approval.Status.String(), approval.CreatedAt,
+		approval.ToolName, string(approval.ToolInput),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create approval: %w", err)
+	}
+	return nil
+}
+
+// GetApproval retrieves an approval by ID
+func (s *SQLiteStore) GetApproval(ctx context.Context, id string) (*Approval, error) {
+	query := `
+		SELECT id, run_id, session_id, status, created_at, responded_at,
+			tool_name, tool_input, comment
+		FROM approvals WHERE id = ?
+	`
+
+	var approval Approval
+	var respondedAt sql.NullTime
+	var comment sql.NullString
+	var statusStr string
+	var toolInputStr string
+
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
+		&approval.ID, &approval.RunID, &approval.SessionID, &statusStr,
+		&approval.CreatedAt, &respondedAt,
+		&approval.ToolName, &toolInputStr, &comment,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("approval not found: %s", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get approval: %w", err)
+	}
+
+	// Convert status string to ApprovalStatus
+	approval.Status = ApprovalStatus(statusStr)
+	if !approval.Status.IsValid() {
+		return nil, fmt.Errorf("invalid approval status in database: %s", statusStr)
+	}
+
+	// Handle nullable fields
+	if respondedAt.Valid {
+		approval.RespondedAt = &respondedAt.Time
+	}
+	approval.Comment = comment.String
+	approval.ToolInput = json.RawMessage(toolInputStr)
+
+	return &approval, nil
+}
+
+// GetPendingApprovals retrieves all pending approvals for a session
+func (s *SQLiteStore) GetPendingApprovals(ctx context.Context, sessionID string) ([]*Approval, error) {
+	query := `
+		SELECT id, run_id, session_id, status, created_at, responded_at,
+			tool_name, tool_input, comment
+		FROM approvals
+		WHERE session_id = ? AND status = ?
+		ORDER BY created_at ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, sessionID, ApprovalStatusLocalPending.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending approvals: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var approvals []*Approval
+	for rows.Next() {
+		var approval Approval
+		var respondedAt sql.NullTime
+		var comment sql.NullString
+		var statusStr string
+		var toolInputStr string
+
+		err := rows.Scan(
+			&approval.ID, &approval.RunID, &approval.SessionID, &statusStr,
+			&approval.CreatedAt, &respondedAt,
+			&approval.ToolName, &toolInputStr, &comment,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan approval: %w", err)
+		}
+
+		// Convert status string to ApprovalStatus
+		approval.Status = ApprovalStatus(statusStr)
+		if !approval.Status.IsValid() {
+			return nil, fmt.Errorf("invalid approval status in database: %s", statusStr)
+		}
+
+		// Handle nullable fields
+		if respondedAt.Valid {
+			approval.RespondedAt = &respondedAt.Time
+		}
+		approval.Comment = comment.String
+		approval.ToolInput = json.RawMessage(toolInputStr)
+
+		approvals = append(approvals, &approval)
+	}
+
+	return approvals, nil
+}
+
+// UpdateApprovalResponse updates the status and comment of an approval
+func (s *SQLiteStore) UpdateApprovalResponse(ctx context.Context, id string, status ApprovalStatus, comment string) error {
+	// Validate status
+	if !status.IsValid() {
+		return fmt.Errorf("invalid approval status: %s", status)
+	}
+
+	query := `
+		UPDATE approvals
+		SET status = ?, comment = ?, responded_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`
+
+	result, err := s.db.ExecContext(ctx, query, status.String(), comment, id)
+	if err != nil {
+		return fmt.Errorf("failed to update approval response: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("approval not found: %s", id)
+	}
+
 	return nil
 }
 

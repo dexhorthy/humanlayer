@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Button } from './ui/button'
 import { cn } from '@/lib/utils'
-import FuzzySearchInput from './FuzzySearchInput'
+import { SearchInput } from './FuzzySearchInput'
+import { Input } from './ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 interface SessionConfig {
   query: string
@@ -33,19 +35,6 @@ export default function CommandInput({
   const [isFocused, setIsFocused] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
 
-  // Common directory suggestions for fuzzy search
-  const commonDirectories = [
-    '~/',
-    '~/Desktop',
-    '~/Documents',
-    '~/Downloads',
-    '~/Projects',
-    '/usr/local',
-    '/opt',
-    '/tmp',
-    './',
-  ]
-
   useEffect(() => {
     if (inputRef.current) {
       inputRef.current.focus()
@@ -56,6 +45,11 @@ export default function CommandInput({
     if (e.key === 'Enter' && !e.shiftKey && !showAdvanced) {
       e.preventDefault()
       onSubmit()
+    }
+
+    if (e.key === 'Escape') {
+      const el = document.getElementById('this-is-another-input-ref-hack')
+      el?.blur()
     }
   }
 
@@ -69,7 +63,8 @@ export default function CommandInput({
     <div className="space-y-4">
       {/* Main query input */}
       <div className="relative">
-        <input
+        <Input
+          id="this-is-another-input-ref-hack"
           ref={inputRef}
           type="text"
           value={value}
@@ -104,20 +99,11 @@ export default function CommandInput({
       {/* Working Directory Field with Fuzzy Search */}
       <div className="space-y-2">
         <label className="text-sm font-medium text-foreground">Working Directory</label>
-        <FuzzySearchInput
-          items={commonDirectories}
+        <SearchInput
           value={config.workingDir}
-          onChange={value => updateConfig({ workingDir: value })}
-          onSelect={directory => updateConfig({ workingDir: directory })}
+          onChange={value => onConfigChange?.({ ...config, workingDir: value })}
+          onSubmit={onSubmit}
           placeholder="/path/to/directory or leave empty for current directory"
-          maxResults={6}
-          emptyMessage="Type a directory path..."
-          renderItem={item => (
-            <div className="flex items-center space-x-2">
-              <span className="text-blue-500">📁</span>
-              <span className="font-mono">{item}</span>
-            </div>
-          )}
         />
       </div>
 
@@ -138,25 +124,23 @@ export default function CommandInput({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Model</label>
-              <select
+              <Select
                 value={config.model || ''}
-                onChange={e => updateConfig({ model: e.target.value || undefined })}
-                className={cn(
-                  'w-full h-9 px-3 text-sm',
-                  'bg-background border rounded-md',
-                  'border-border hover:border-primary/50 focus:border-primary focus:ring-2 focus:ring-primary/20',
-                )}
+                onValueChange={value => updateConfig({ model: value || undefined })}
               >
-                <option value="">Default Model</option>
-                <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                <option value="claude-3-opus-20240229">Claude 3 Opus</option>
-                <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
-              </select>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sonnet">Sonnet</SelectItem>
+                  <SelectItem value="opus">Opus</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Max Turns</label>
-              <input
+              <Input
                 type="number"
                 value={config.maxTurns || ''}
                 onChange={e =>

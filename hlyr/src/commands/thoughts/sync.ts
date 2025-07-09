@@ -37,18 +37,39 @@ function syncThoughts(thoughtsRepo: string, message: string): void {
     // Check if there are changes to commit
     const hasChanges = checkGitStatus(expandedRepo)
 
-    if (!hasChanges) {
-      console.log(chalk.gray('No changes to sync'))
-      return
+    if (hasChanges) {
+      // Commit changes
+      const commitMessage = message || `Sync thoughts - ${new Date().toISOString()}`
+      execFileSync('git', ['commit', '-m', commitMessage], { cwd: expandedRepo, stdio: 'pipe' })
+
+      console.log(chalk.green('✅ Thoughts synchronized'))
+    } else {
+      console.log(chalk.gray('No changes to commit'))
     }
 
-    // Commit changes
-    const commitMessage = message || `Sync thoughts - ${new Date().toISOString()}`
-    execFileSync('git', ['commit', '-m', commitMessage], { cwd: expandedRepo, stdio: 'pipe' })
+    // Pull latest changes after committing (to avoid conflicts with staged changes)
+    try {
+      execSync('git pull --rebase', {
+        stdio: 'pipe',
+        cwd: expandedRepo,
+      })
+    } catch (error) {
+      const errorStr = error.toString()
+      if (errorStr.includes('CONFLICT') || errorStr.includes('rebase')) {
+        console.error(chalk.red('Error: Merge conflict detected in thoughts repository'))
+        console.error(chalk.red('Please resolve conflicts manually in:'), expandedRepo)
+        console.error(
+          chalk.red('Then run "git rebase --continue" and "humanlayer thoughts sync" again'),
+        )
+        process.exit(1)
+      } else {
+        // If pull fails for other reasons, show warning but continue
+        // This handles cases like no upstream, network issues, etc.
+        console.warn(chalk.yellow('Warning: Could not pull latest changes:'), error.message)
+      }
+    }
 
-    console.log(chalk.green('✅ Thoughts synchronized'))
-
-    // Check if remote exists
+    // Check if remote exists and push any unpushed commits
     try {
       execSync('git remote get-url origin', { cwd: expandedRepo, stdio: 'pipe' })
 
@@ -162,18 +183,6 @@ function createSearchDirectory(thoughtsDir: string): void {
     } catch {
       // Silently skip files we can't link (e.g., different filesystems)
     }
-  }
-
-  // Make .search directory read-only
-  try {
-    // First set directories to be readable and traversable
-    execSync(`find "${searchDir}" -type d -exec chmod 755 {} +`, { stdio: 'pipe' })
-    // Then set files to be read-only
-    execSync(`find "${searchDir}" -type f -exec chmod 444 {} +`, { stdio: 'pipe' })
-    // Finally make directories read-only but still traversable
-    execSync(`find "${searchDir}" -type d -exec chmod 555 {} +`, { stdio: 'pipe' })
-  } catch {
-    // Ignore chmod errors on systems that don't support it
   }
 
   console.log(chalk.gray(`Created ${linkedCount} hard links in searchable directory`))
