@@ -5,7 +5,9 @@ import { useSession } from '@/hooks'
 export function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
-  const { session } = useSession(sessionId)
+  console.log('SessionDetailPage - sessionId from params:', sessionId)
+  const { session, loading, error } = useSession(sessionId)
+  console.log('SessionDetailPage - session:', session, 'loading:', loading, 'error:', error)
 
   const handleClose = () => {
     navigate('/')

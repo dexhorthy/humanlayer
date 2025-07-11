@@ -34,7 +34,6 @@ export function ResponseInput({
     <>
       {!showResponseInput ? (
         <div className="flex items-center justify-between py-1">
-          <span className="text-sm text-muted-foreground">{getSessionStatusText(session.status)}</span>
           <Button
             size="sm"
             variant="outline"
@@ -43,6 +42,7 @@ export function ResponseInput({
           >
             {getSessionButtonText(session.status)}
           </Button>
+          <span className="text-sm text-muted-foreground">{getSessionStatusText(session.status)}</span>
         </div>
       ) : (
         <div className="space-y-2">

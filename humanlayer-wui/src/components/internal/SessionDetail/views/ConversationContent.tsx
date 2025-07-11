@@ -6,6 +6,7 @@ import keyBy from 'lodash.keyby'
 
 import { ConversationEvent, ConversationEventType } from '@/lib/daemon/types'
 import { useConversation } from '@/hooks/useConversation'
+import { useSessionSnapshots } from '@/hooks/useSessionSnapshots'
 import { Skeleton } from '@/components/ui/skeleton'
 import { MessageCircleDashed } from 'lucide-react'
 import { formatAbsoluteTimestamp } from '@/utils/formatting'
@@ -61,6 +62,12 @@ export function ConversationContent({
   void expandedToolResult
   const [expandedEventId, setExpandedEventId] = useState<number | null>(null)
   const { events, loading, error, isInitialLoad } = useConversation(sessionId, undefined, 1000)
+  const {
+    getSnapshot,
+    snapshots,
+    loading: snapshotsLoading,
+    error: snapshotsError,
+  } = useSessionSnapshots(sessionId)
   const toolResults = events.filter(event => event.event_type === ConversationEventType.ToolResult)
   const toolResultsByKey = keyBy(toolResults, 'tool_result_for_id')
 
@@ -84,6 +91,7 @@ export function ConversationContent({
         onToggleSplitView,
         event.tool_id ? toolResultsByKey[event.tool_id] : undefined,
         focusedEventId === event.id,
+        getSnapshot,
       ),
     )
   const nonEmptyDisplayObjects = displayObjects.filter(displayObject => displayObject !== null)
@@ -202,6 +210,15 @@ export function ConversationContent({
   if (!hasSubTasks) {
     return (
       <div ref={containerRef} data-conversation-container className="overflow-y-auto flex-1">
+        {/* Debug info */}
+        <div className="bg-yellow-100 dark:bg-yellow-900/20 p-2 text-xs mb-2">
+          <div>Snapshots Debug:</div>
+          <div>Session ID: {sessionId}</div>
+          <div>Loading: {snapshotsLoading ? 'Yes' : 'No'}</div>
+          <div>Error: {snapshotsError || 'None'}</div>
+          <div>Total snapshots loaded: {Object.keys(snapshots).length}</div>
+          <div>Snapshot files: {Object.keys(snapshots).join(', ') || 'None'}</div>
+        </div>
         <div>
           {nonEmptyDisplayObjects.map((displayObject, index) => (
             <div key={displayObject.id}>
@@ -267,6 +284,15 @@ export function ConversationContent({
   // Render with task groups
   return (
     <div ref={containerRef} data-conversation-container className="overflow-y-auto flex-1">
+      {/* Debug info */}
+      <div className="bg-yellow-100 dark:bg-yellow-900/20 p-2 text-xs mb-2">
+        <div>Snapshots Debug:</div>
+        <div>Session ID: {sessionId}</div>
+        <div>Loading: {snapshotsLoading ? 'Yes' : 'No'}</div>
+        <div>Error: {snapshotsError || 'None'}</div>
+        <div>Total snapshots loaded: {Object.keys(snapshots).length}</div>
+        <div>Snapshot files: {Object.keys(snapshots).join(', ') || 'None'}</div>
+      </div>
       <div>
         {rootEvents
           .filter(event => event.event_type !== ConversationEventType.ToolResult)
@@ -296,6 +322,7 @@ export function ConversationContent({
                   setFocusSource={setFocusSource}
                   setConfirmingApprovalId={setConfirmingApprovalId}
                   toolResultsByKey={toolResultsByKey}
+                  getSnapshot={getSnapshot}
                 />
               )
             } else {
@@ -312,6 +339,7 @@ export function ConversationContent({
                 onToggleSplitView,
                 event.tool_id ? toolResultsByKey[event.tool_id] : undefined,
                 focusedEventId === event.id,
+                getSnapshot,
               )
 
               if (!displayObject) return null

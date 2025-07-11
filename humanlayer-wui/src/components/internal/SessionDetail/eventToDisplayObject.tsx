@@ -4,7 +4,12 @@ import textMd from '@wooorm/starry-night/text.md'
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime'
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
 
-import { ConversationEvent, ConversationEventType, ApprovalStatus } from '@/lib/daemon/types'
+import {
+  ConversationEvent,
+  ConversationEventType,
+  ApprovalStatus,
+  FileSnapshot,
+} from '@/lib/daemon/types'
 import { Button } from '@/components/ui/button'
 import { Bot, FilePenLine, UserCheck, User, Wrench, Globe } from 'lucide-react'
 import { CommandToken } from '@/components/internal/CommandToken'
@@ -12,6 +17,7 @@ import { formatToolResult } from './formatToolResult'
 import { DiffViewToggle } from './components/DiffViewToggle'
 import { DenyForm } from './components/DenyForm'
 import { CustomDiffViewer } from './components/CustomDiffViewer'
+import { formatTimestamp } from '@/utils/formatting'
 
 // TODO(2): Break this monster function into smaller, focused display components
 // TODO(2): Extract tool-specific rendering logic
@@ -47,6 +53,7 @@ export function eventToDisplayObject(
   onToggleSplitView?: () => void,
   toolResult?: ConversationEvent,
   isFocused?: boolean,
+  getSnapshot?: (filePath: string) => FileSnapshot | undefined,
 ) {
   let subject = null
   let body = null
@@ -188,6 +195,42 @@ export function eventToDisplayObject(
         </span>
       )
     }
+
+    // MCP tool handling
+    if (event.tool_name?.startsWith('mcp__')) {
+      // Parse the MCP tool name: mcp__service__method
+      const parts = event.tool_name.split('__')
+      const service = parts[1] || 'unknown'
+      const method = parts.slice(2).join('__') || 'unknown' // Handle methods with __ in name
+
+      const toolInput = event.tool_input_json ? JSON.parse(event.tool_input_json) : {}
+
+      subject = (
+        <span>
+          <span className="font-bold">
+            {service} - {method}{' '}
+          </span>
+          <span className="font-mono text-sm text-muted-foreground">
+            {/* Show first parameter if it's simple (string/number) */}
+            {toolInput && typeof toolInput === 'object' && Object.keys(toolInput).length > 0 && (
+              <span className="text-muted-foreground/70">
+                (
+                {Object.entries(toolInput)
+                  .slice(0, 2) // Show max 2 params
+                  .map(([key, value]) => {
+                    if (typeof value === 'string' || typeof value === 'number') {
+                      return `${key}: "${value}"`
+                    }
+                    return `${key}: ...`
+                  })
+                  .join(', ')}
+                {Object.keys(toolInput).length > 2 && ', ...'})
+              </span>
+            )}
+          </span>
+        </span>
+      )
+    }
   }
 
   // Approvals
@@ -243,6 +286,8 @@ export function eventToDisplayObject(
 
     if (event.tool_name === 'Edit') {
       const toolInput = JSON.parse(event.tool_input_json!)
+      const snapshot = getSnapshot?.(toolInput.file_path)
+
       previewFile = (
         <div className={`border ${getBorderClass()} rounded p-4 mt-4`}>
           <div className="mb-4 flex items-center justify-between">
@@ -268,15 +313,28 @@ export function eventToDisplayObject(
             )}
           </div>
           <CustomDiffViewer
+            fileContents={snapshot?.content}
             edits={[{ oldValue: toolInput.old_string, newValue: toolInput.new_string }]}
             splitView={isSplitView ?? false}
           />
+          <div className="mt-2 text-xs text-muted-foreground">
+            {snapshot ? (
+              <>
+                Snapshot from: {formatTimestamp(snapshot.created_at)} • {snapshot.content.length} chars
+              </>
+            ) : (
+              <>
+                No snapshot available for: {toolInput.file_path} • getSnapshot exists: {!!getSnapshot}
+              </>
+            )}
+          </div>
         </div>
       )
     }
 
     if (event.tool_name === 'MultiEdit') {
       const toolInput = JSON.parse(event.tool_input_json!)
+      const snapshot = getSnapshot?.(toolInput.file_path)
       const allEdits = toolInput.edits.map((e: any) => ({
         oldValue: e.old_string,
         newValue: e.new_string,
@@ -308,7 +366,22 @@ export function eventToDisplayObject(
               />
             )}
           </div>
-          <CustomDiffViewer edits={allEdits} splitView={isSplitView ?? false} />
+          <CustomDiffViewer
+            fileContents={snapshot?.content}
+            edits={allEdits}
+            splitView={isSplitView ?? false}
+          />
+          <div className="mt-2 text-xs text-muted-foreground">
+            {snapshot ? (
+              <>
+                Snapshot from: {formatTimestamp(snapshot.created_at)} • {snapshot.content.length} chars
+              </>
+            ) : (
+              <>
+                No snapshot available for: {toolInput.file_path} • getSnapshot exists: {!!getSnapshot}
+              </>
+            )}
+          </div>
         </div>
       )
     }

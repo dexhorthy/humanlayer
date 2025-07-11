@@ -1,5 +1,5 @@
 import { ChevronDown, CircleDashed, Wrench, FilePenLine, Bot, User, UserCheck } from 'lucide-react'
-import { ConversationEvent } from '@/lib/daemon/types'
+import { ConversationEvent, FileSnapshot } from '@/lib/daemon/types'
 import { TaskEventGroup } from '../hooks/useTaskGrouping'
 import { truncate, formatAbsoluteTimestamp } from '@/utils/formatting'
 import { eventToDisplayObject } from '../eventToDisplayObject'
@@ -25,6 +25,7 @@ interface TaskGroupProps {
   setFocusSource?: (source: 'mouse' | 'keyboard' | null) => void
   setConfirmingApprovalId?: (id: string | null) => void
   toolResultsByKey: Record<string, ConversationEvent>
+  getSnapshot?: (filePath: string) => FileSnapshot | undefined
 }
 
 export function TaskGroup({
@@ -47,6 +48,7 @@ export function TaskGroup({
   setFocusSource,
   setConfirmingApprovalId,
   toolResultsByKey,
+  getSnapshot,
 }: TaskGroupProps) {
   const { parentTask, toolCallCount, latestEvent, hasPendingApproval } = group
   const description = JSON.parse(parentTask.tool_input_json || '{}').description || 'Task'
@@ -172,6 +174,7 @@ export function TaskGroup({
               onToggleSplitView,
               subEvent.tool_id ? toolResultsByKey[subEvent.tool_id] : undefined,
               focusedEventId === subEvent.id,
+              getSnapshot,
             )
 
             if (!displayObject) return null

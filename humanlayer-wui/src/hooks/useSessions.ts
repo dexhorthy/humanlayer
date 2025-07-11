@@ -101,9 +101,12 @@ export function useSession(sessionId: string | undefined) {
       setLoading(true)
       setError(null)
 
+      console.log('Fetching session with ID:', sessionId)
       const response = await daemonClient.getSessionState(sessionId)
+      console.log('Got session response:', response)
       setSession(response.session)
     } catch (err) {
+      console.error('Failed to fetch session:', err)
       setError(formatError(err))
     } finally {
       setLoading(false)
