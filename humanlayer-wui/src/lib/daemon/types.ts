@@ -326,6 +326,22 @@ export interface InterruptSessionResponse {
   status: string
 }
 
+// File snapshot types
+export interface FileSnapshot {
+  tool_id: string
+  file_path: string
+  content: string
+  created_at: string
+}
+
+export interface GetSessionSnapshotsRequest {
+  session_id: string
+}
+
+export interface GetSessionSnapshotsResponse {
+  snapshots: FileSnapshot[]
+}
+
 // Session settings types
 export interface UpdateSessionSettingsRequest {
   session_id: string

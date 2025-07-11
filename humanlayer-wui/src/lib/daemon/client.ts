@@ -15,6 +15,7 @@ import type {
   SubscribeRequest,
   UpdateSessionSettingsResponse,
   GetRecentPathsResponse,
+  GetSessionSnapshotsResponse,
 } from './types'
 
 export class DaemonClient {
@@ -112,6 +113,10 @@ export class DaemonClient {
 
   async getRecentPaths(limit?: number): Promise<GetRecentPathsResponse> {
     return await invoke('get_recent_paths', { limit })
+  }
+
+  async getSessionSnapshots(sessionId: string): Promise<GetSessionSnapshotsResponse> {
+    return await invoke('get_session_snapshots', { session_id: sessionId })
   }
 }
 

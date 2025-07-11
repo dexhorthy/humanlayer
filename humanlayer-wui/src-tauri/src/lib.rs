@@ -348,6 +348,22 @@ async fn get_recent_paths(
     }
 }
 
+#[tauri::command]
+async fn get_session_snapshots(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> std::result::Result<daemon_client::GetSessionSnapshotsResponse, String> {
+    let client_guard = state.client.lock().await;
+
+    match &*client_guard {
+        Some(client) => client
+            .get_session_snapshots(&session_id)
+            .await
+            .map_err(|e| format!("Failed to get session snapshots: {}", e)),
+        None => Err("Not connected to daemon".to_string()),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize tracing
@@ -378,6 +394,7 @@ pub fn run() {
             interrupt_session,
             update_session_settings,
             get_recent_paths,
+            get_session_snapshots,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

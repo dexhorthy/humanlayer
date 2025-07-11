@@ -501,3 +501,22 @@ pub struct RecentPath {
     pub last_used: String,
     pub usage_count: i32,
 }
+
+// File snapshot types
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetSessionSnapshotsRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetSessionSnapshotsResponse {
+    pub snapshots: Vec<FileSnapshot>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileSnapshot {
+    pub tool_id: String,
+    pub file_path: String,
+    pub content: String,
+    pub created_at: String,
+}
