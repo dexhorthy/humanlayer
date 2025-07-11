@@ -6,6 +6,9 @@ setup: ## Set up the repository with all dependencies and builds
 worktree: ## Create a new worktree for development work (use hack/create_worktree.sh branch_name for specific names)
 	hack/create_worktree.sh
 
+thoughts:
+	npx humanlayer thoughts init --directory humanlayer
+
 .PHONY: check-py
 check-py: ## Run code quality tools.
 	@. ./hack/run_silent.sh && print_header "humanlayer" "Python checks"
@@ -462,3 +465,7 @@ check-local:
 .PHONY: wui
 wui:
 	cd humanlayer-wui && bun run tauri dev
+
+.PHONY: hld
+hld:
+	cd hlyr && npm run build && dist/bin/hld 2>&1 | tee -a ~/.humanlayer/daemon.log
