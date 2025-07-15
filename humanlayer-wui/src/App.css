@@ -183,6 +183,34 @@
   --terminal-warning: #e6db74;
   --terminal-error: #f92672;
 }
+
+/* Nordic Ice - Cool glacial theme */
+[data-theme='nordic-ice'] {
+  --terminal-bg: #e8ecf0;
+  --terminal-bg-alt: #d8dee9;
+  --terminal-fg: #2e3440;
+  --terminal-fg-dim: #4c566a;
+  --terminal-accent: #5e81ac;
+  --terminal-accent-alt: #81a1c1;
+  --terminal-border: #b8c5d6;
+  --terminal-success: #8fbcbb;
+  --terminal-warning: #ebcb8b;
+  --terminal-error: #bf616a;
+}
+
+/* Nordic Night - Dark aurora theme */
+[data-theme='nordic-night'] {
+  --terminal-bg: #2e3440;
+  --terminal-bg-alt: #3b4252;
+  --terminal-fg: #eceff4;
+  --terminal-fg-dim: #d8dee9;
+  --terminal-accent: #88c0d0;
+  --terminal-accent-alt: #81a1c1;
+  --terminal-border: #4c566a;
+  --terminal-success: #a3be8c;
+  --terminal-warning: #ebcb8b;
+  --terminal-error: #bf616a;
+}
 @layer base {
   * {
     @apply border-border outline-ring/50;
