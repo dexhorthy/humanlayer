@@ -5,14 +5,17 @@ This guide covers debugging tools and techniques for troubleshooting HumanLayer 
 ## Quick Start
 
 ```bash
-# Check pending approvals
-npx humanlayer approvals list --pending
+# Check pending approvals (using dev daemon)
+npx humanlayer approvals list --pending --daemon-socket ~/.humanlayer/daemon-dev.sock
 
 # Approve the last pending approval
-npx humanlayer approve last
+npx humanlayer approve last --daemon-socket ~/.humanlayer/daemon-dev.sock
 
 # View session timeline to debug state transitions
-npx humanlayer sessions show last --timeline
+npx humanlayer sessions show last --timeline --daemon-socket ~/.humanlayer/daemon-dev.sock
+
+# Pro tip: Set an alias for the dev daemon
+alias hldev='npx humanlayer --daemon-socket ~/.humanlayer/daemon-dev.sock'
 ```
 
 ## Debug Commands
@@ -88,12 +91,14 @@ npx humanlayer sessions show last --all
 ### Using Different Daemons
 
 ```bash
-# Use development daemon
+# Use development daemon (recommended for debugging)
 npx humanlayer approvals list --daemon-socket ~/.humanlayer/daemon-dev.sock
 
-# Use nightly daemon (default)
+# Use production/nightly daemon
 npx humanlayer approvals list --daemon-socket ~/.humanlayer/daemon.sock
 ```
+
+**Note**: Most debugging should be done with `daemon-dev.sock` as that's where active development happens.
 
 ## Common Debugging Scenarios
 
@@ -103,13 +108,13 @@ The issue: After approving a tool, the loader doesn't reappear until the tool fi
 
 ```bash
 # Launch a test session
-npx humanlayer launch "create a test file" --model opus
+npx humanlayer launch "create a test file" --model opus --daemon-socket ~/.humanlayer/daemon-dev.sock
 
 # Watch the timeline in another terminal
-watch -n 1 'npx humanlayer sessions show last --timeline'
+watch -n 1 'npx humanlayer sessions show last --timeline --daemon-socket ~/.humanlayer/daemon-dev.sock'
 
 # When approval is needed, approve it
-npx humanlayer approve last
+npx humanlayer approve last --daemon-socket ~/.humanlayer/daemon-dev.sock
 
 # Check the timeline for missing EventSessionStatusChanged
 ```
