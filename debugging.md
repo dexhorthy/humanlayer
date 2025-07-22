@@ -188,8 +188,14 @@ Key indicators:
 For advanced debugging, you can query the SQLite database directly:
 
 ```bash
+# Find the dev database (it has a timestamp)
+ls -la ~/.humanlayer/dev/daemon-*.db | tail -1
+
+# Set the database path (replace with actual timestamp)
+DB_PATH=~/.humanlayer/dev/daemon-2025-07-22-06-02-21.db
+
 # Recent sessions
-sqlite3 ~/.humanlayer/daemon.db "
+sqlite3 $DB_PATH "
   SELECT id, status, created_at, updated_at 
   FROM sessions 
   ORDER BY created_at DESC 
@@ -197,7 +203,7 @@ sqlite3 ~/.humanlayer/daemon.db "
 "
 
 # Pending approvals
-sqlite3 ~/.humanlayer/daemon.db "
+sqlite3 $DB_PATH "
   SELECT a.id, a.tool_name, a.status, s.status as session_status
   FROM approvals a
   JOIN sessions s ON a.session_id = s.id
@@ -205,7 +211,7 @@ sqlite3 ~/.humanlayer/daemon.db "
 "
 
 # Session events
-sqlite3 ~/.humanlayer/daemon.db "
+sqlite3 $DB_PATH "
   SELECT event_type, event_data, created_at
   FROM session_events
   WHERE session_id = 'SESSION_ID'
@@ -217,14 +223,17 @@ sqlite3 ~/.humanlayer/daemon.db "
 
 ### Daemon Connection Issues
 ```bash
-# Check if daemon is running
-ps aux | grep hld
+# Check if dev daemon is running
+ps aux | grep hld-dev
 
 # Check socket exists
-ls -la ~/.humanlayer/daemon*.sock
+ls -la ~/.humanlayer/daemon-dev.sock
 
 # Test daemon health
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | nc -U ~/.humanlayer/daemon.sock
+echo '{"jsonrpc":"2.0","method":"health","id":1}' | nc -U ~/.humanlayer/daemon-dev.sock
+
+# Check dev daemon logs
+tail -f ~/.humanlayer/logs/daemon-dev-*.log
 ```
 
 ### Approval Not Appearing
