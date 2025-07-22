@@ -78,6 +78,7 @@ func (m *manager) CreateApproval(ctx context.Context, runID, toolName string, to
 	switch status {
 	case store.ApprovalStatusLocalPending:
 		// Update session status to waiting_input for pending approvals
+		// This ensures the UI can display the approval interface
 		if err := m.updateSessionStatus(ctx, session.ID, store.SessionStatusWaitingInput); err != nil {
 			slog.Warn("failed to update session status",
 				"error", err,
@@ -149,16 +150,52 @@ func (m *manager) ApproveToolCall(ctx context.Context, id string, comment string
 	// Publish event
 	m.publishApprovalResolvedEvent(approval, true, comment)
 
-	// Update session status back to running
-	if err := m.updateSessionStatus(ctx, approval.SessionID, store.SessionStatusRunning); err != nil {
-		slog.Warn("failed to update session status",
+	// Check if there are other pending approvals
+	pendingApprovals, err := m.GetPendingApprovals(ctx, approval.SessionID)
+	if err != nil {
+		slog.Warn("failed to check pending approvals",
 			"error", err,
 			"session_id", approval.SessionID)
+		// Continue with status update even if check fails
+		pendingApprovals = nil
+	}
+
+	// Only transition to running if no other approvals are pending
+	// GetPendingApprovals returns ALL pending approvals, including ones that haven't
+	// been updated in the database yet. We need to check if there are any OTHER
+	// pending approvals besides the one we just approved.
+	otherPendingCount := 0
+	for _, pa := range pendingApprovals {
+		if pa.ID != id {
+			otherPendingCount++
+		}
+	}
+	
+	if otherPendingCount == 0 {
+		if err := m.updateSessionStatus(ctx, approval.SessionID, store.SessionStatusRunning); err != nil {
+			slog.Warn("failed to update session status",
+				"error", err,
+				"session_id", approval.SessionID)
+		}
+		slog.Debug("transitioning to running - no other pending approvals",
+			"session_id", approval.SessionID,
+			"approval_id", id)
+	} else {
+		slog.Debug("keeping session in waiting_input status",
+			"session_id", approval.SessionID,
+			"approval_id", id,
+			"other_pending_approvals", otherPendingCount)
 	}
 
 	slog.Info("approved tool call",
 		"approval_id", id,
-		"comment", comment)
+		"comment", comment,
+		"remaining_approvals", func() int {
+			if pendingApprovals == nil {
+				return -1
+			}
+			return len(pendingApprovals) - 1
+		}())
 
 	return nil
 }
@@ -186,16 +223,52 @@ func (m *manager) DenyToolCall(ctx context.Context, id string, reason string) er
 	// Publish event
 	m.publishApprovalResolvedEvent(approval, false, reason)
 
-	// Update session status back to running
-	if err := m.updateSessionStatus(ctx, approval.SessionID, store.SessionStatusRunning); err != nil {
-		slog.Warn("failed to update session status",
+	// Check if there are other pending approvals
+	pendingApprovals, err := m.GetPendingApprovals(ctx, approval.SessionID)
+	if err != nil {
+		slog.Warn("failed to check pending approvals",
 			"error", err,
 			"session_id", approval.SessionID)
+		// Continue with status update even if check fails
+		pendingApprovals = nil
+	}
+
+	// Only transition to running if no other approvals are pending
+	// GetPendingApprovals returns ALL pending approvals, including ones that haven't
+	// been updated in the database yet. We need to check if there are any OTHER
+	// pending approvals besides the one we just approved.
+	otherPendingCount := 0
+	for _, pa := range pendingApprovals {
+		if pa.ID != id {
+			otherPendingCount++
+		}
+	}
+	
+	if otherPendingCount == 0 {
+		if err := m.updateSessionStatus(ctx, approval.SessionID, store.SessionStatusRunning); err != nil {
+			slog.Warn("failed to update session status",
+				"error", err,
+				"session_id", approval.SessionID)
+		}
+		slog.Debug("transitioning to running - no other pending approvals",
+			"session_id", approval.SessionID,
+			"approval_id", id)
+	} else {
+		slog.Debug("keeping session in waiting_input status",
+			"session_id", approval.SessionID,
+			"approval_id", id,
+			"other_pending_approvals", otherPendingCount)
 	}
 
 	slog.Info("denied tool call",
 		"approval_id", id,
-		"reason", reason)
+		"reason", reason,
+		"remaining_approvals", func() int {
+			if pendingApprovals == nil {
+				return -1
+			}
+			return len(pendingApprovals) - 1
+		}())
 
 	return nil
 }

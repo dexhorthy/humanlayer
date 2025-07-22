@@ -249,7 +249,7 @@ export class DaemonClient extends EventEmitter {
   }
 
   // Call sends an RPC request and waits for the response (like the Go client)
-  private async call<T = unknown>(method: string, params?: unknown): Promise<T> {
+  async call<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (!this.conn) {
       throw new Error('Not connected to daemon')
     }

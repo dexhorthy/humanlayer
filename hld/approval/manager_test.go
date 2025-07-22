@@ -3,6 +3,7 @@ package approval
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -193,6 +194,9 @@ func TestManager_ApproveToolCall(t *testing.T) {
 		assert.Equal(t, store.SessionStatusRunning, event.Data["new_status"])
 	})
 
+	// Mock no other pending approvals
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return([]*store.Approval{approval}, nil)
+
 	err := manager.ApproveToolCall(ctx, approvalID, comment)
 	require.NoError(t, err)
 }
@@ -252,6 +256,9 @@ func TestManager_DenyToolCall(t *testing.T) {
 		assert.Equal(t, store.SessionStatusWaitingInput, event.Data["old_status"])
 		assert.Equal(t, store.SessionStatusRunning, event.Data["new_status"])
 	})
+
+	// Mock no other pending approvals
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return([]*store.Approval{approval}, nil)
 
 	err := manager.DenyToolCall(ctx, approvalID, reason)
 	require.NoError(t, err)
@@ -354,6 +361,9 @@ func TestApprovalManager_EmitsStatusChangeEvent(t *testing.T) {
 		publishedEvents = append(publishedEvents, event)
 	}).Times(2) // Expect exactly 2 events: approval resolved and status change
 
+	// Mock no other pending approvals
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return([]*store.Approval{approval}, nil)
+
 	// Test: Approve tool call
 	err := manager.ApproveToolCall(ctx, approvalID, "approved")
 	require.NoError(t, err)
@@ -374,4 +384,224 @@ func TestApprovalManager_EmitsStatusChangeEvent(t *testing.T) {
 	require.Equal(t, sessionID, statusEvent.Data["session_id"])
 	require.Equal(t, store.SessionStatusWaitingInput, statusEvent.Data["old_status"])
 	require.Equal(t, store.SessionStatusRunning, statusEvent.Data["new_status"])
+}
+
+func TestApprovalManager_ParallelApprovals(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStore := store.NewMockConversationStore(ctrl)
+	mockEventBus := bus.NewMockEventBus(ctrl)
+
+	manager := NewManager(mockStore, mockEventBus).(*manager)
+
+	ctx := context.Background()
+	sessionID := "test-session-123"
+	approval1ID := "local-approval-001"
+	approval2ID := "local-approval-002"
+
+	// Create mock approvals
+	approval1 := &store.Approval{
+		ID:        approval1ID,
+		SessionID: sessionID,
+		Status:    store.ApprovalStatusLocalPending,
+		ToolName:  "Write",
+	}
+	approval2 := &store.Approval{
+		ID:        approval2ID,
+		SessionID: sessionID,
+		Status:    store.ApprovalStatusLocalPending,
+		ToolName:  "Execute",
+	}
+
+	// Test Case 1: Approve first approval with another pending
+	// Setup mocks for first approval
+	mockStore.EXPECT().GetApproval(ctx, approval1ID).Return(approval1, nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, approval1ID, store.ApprovalStatusLocalApproved, "approved first").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, approval1ID, store.ApprovalStatusApproved).Return(nil)
+
+	// Mock that there are still 2 pending approvals (including current one being processed)
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return([]*store.Approval{approval1, approval2}, nil)
+
+	// Event should be published but NO status update should happen
+	mockEventBus.EXPECT().Publish(gomock.Any()).Do(func(event bus.Event) {
+		assert.Equal(t, bus.EventApprovalResolved, event.Type)
+	})
+
+	// Approve first tool - should NOT transition to running
+	err := manager.ApproveToolCall(ctx, approval1ID, "approved first")
+	require.NoError(t, err)
+
+	// Test Case 2: Approve second approval (last one)
+	// Setup mocks for second approval
+	mockStore.EXPECT().GetApproval(ctx, approval2ID).Return(approval2, nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, approval2ID, store.ApprovalStatusLocalApproved, "approved second").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, approval2ID, store.ApprovalStatusApproved).Return(nil)
+
+	// Mock that there's only 1 pending approval left (the current one)
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return([]*store.Approval{approval2}, nil)
+
+	// Mock session in waiting_input status
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusWaitingInput,
+	}, nil)
+
+	// NOW we expect status update
+	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+
+	// Expect both approval resolved and status change events
+	var publishedEvents []bus.Event
+	mockEventBus.EXPECT().Publish(gomock.Any()).Do(func(event bus.Event) {
+		publishedEvents = append(publishedEvents, event)
+	}).Times(2)
+
+	// Approve second tool - should transition to running
+	err = manager.ApproveToolCall(ctx, approval2ID, "approved second")
+	require.NoError(t, err)
+
+	// Verify status change event was published
+	var statusEvent *bus.Event
+	for _, e := range publishedEvents {
+		if e.Type == bus.EventSessionStatusChanged {
+			statusEvent = &e
+			break
+		}
+	}
+	require.NotNil(t, statusEvent, "Expected status change event when approving last tool")
+}
+
+func TestApprovalManager_ThreeParallelApprovals(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStore := store.NewMockConversationStore(ctrl)
+	mockEventBus := bus.NewMockEventBus(ctrl)
+
+	manager := NewManager(mockStore, mockEventBus).(*manager)
+
+	ctx := context.Background()
+	sessionID := "test-session-456"
+	approvals := []*store.Approval{
+		{ID: "local-001", SessionID: sessionID, Status: store.ApprovalStatusLocalPending, ToolName: "Write"},
+		{ID: "local-002", SessionID: sessionID, Status: store.ApprovalStatusLocalPending, ToolName: "Edit"},
+		{ID: "local-003", SessionID: sessionID, Status: store.ApprovalStatusLocalPending, ToolName: "Execute"},
+	}
+
+	// Approve first tool - 3 pending
+	mockStore.EXPECT().GetApproval(ctx, "local-001").Return(approvals[0], nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, "local-001", store.ApprovalStatusLocalApproved, "").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, "local-001", store.ApprovalStatusApproved).Return(nil)
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return(approvals, nil)
+	mockEventBus.EXPECT().Publish(gomock.Any())
+
+	err := manager.ApproveToolCall(ctx, "local-001", "")
+	require.NoError(t, err)
+
+	// Deny second tool - 2 pending
+	mockStore.EXPECT().GetApproval(ctx, "local-002").Return(approvals[1], nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, "local-002", store.ApprovalStatusLocalDenied, "not safe").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, "local-002", store.ApprovalStatusDenied).Return(nil)
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return(approvals[1:], nil) // Only 2 and 3 pending
+	mockEventBus.EXPECT().Publish(gomock.Any())
+
+	err = manager.DenyToolCall(ctx, "local-002", "not safe")
+	require.NoError(t, err)
+
+	// Approve third tool - last one
+	mockStore.EXPECT().GetApproval(ctx, "local-003").Return(approvals[2], nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, "local-003", store.ApprovalStatusLocalApproved, "").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, "local-003", store.ApprovalStatusApproved).Return(nil)
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return(approvals[2:], nil) // Only 3 pending
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusWaitingInput,
+	}, nil)
+	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+	mockEventBus.EXPECT().Publish(gomock.Any()).Times(2) // approval resolved + status change
+
+	err = manager.ApproveToolCall(ctx, "local-003", "")
+	require.NoError(t, err)
+}
+
+func TestApprovalManager_ErrorHandlingInParallelApprovals(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStore := store.NewMockConversationStore(ctrl)
+	mockEventBus := bus.NewMockEventBus(ctrl)
+
+	manager := NewManager(mockStore, mockEventBus).(*manager)
+
+	ctx := context.Background()
+	sessionID := "test-session-789"
+	approvalID := "local-approval-123"
+
+	approval := &store.Approval{
+		ID:        approvalID,
+		SessionID: sessionID,
+		Status:    store.ApprovalStatusLocalPending,
+		ToolName:  "Write",
+	}
+
+	// Setup mocks
+	mockStore.EXPECT().GetApproval(ctx, approvalID).Return(approval, nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, approvalID, store.ApprovalStatusLocalApproved, "").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, approvalID, store.ApprovalStatusApproved).Return(nil)
+
+	// Mock error when checking pending approvals - should still update status
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return(nil, fmt.Errorf("database error"))
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusWaitingInput,
+	}, nil)
+	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+	mockEventBus.EXPECT().Publish(gomock.Any()).Times(2)
+
+	// Should not fail even if GetPendingApprovals fails
+	err := manager.ApproveToolCall(ctx, approvalID, "")
+	require.NoError(t, err)
+}
+
+func TestApprovalManager_MixedApprovalAndDenial(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStore := store.NewMockConversationStore(ctrl)
+	mockEventBus := bus.NewMockEventBus(ctrl)
+
+	manager := NewManager(mockStore, mockEventBus).(*manager)
+
+	ctx := context.Background()
+	sessionID := "test-session-mix"
+
+	approvals := []*store.Approval{
+		{ID: "local-mix-001", SessionID: sessionID, Status: store.ApprovalStatusLocalPending, ToolName: "Write"},
+		{ID: "local-mix-002", SessionID: sessionID, Status: store.ApprovalStatusLocalPending, ToolName: "Execute"},
+	}
+
+	// Deny first approval - should still have one pending
+	mockStore.EXPECT().GetApproval(ctx, "local-mix-001").Return(approvals[0], nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, "local-mix-001", store.ApprovalStatusLocalDenied, "dangerous").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, "local-mix-001", store.ApprovalStatusDenied).Return(nil)
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return(approvals, nil)
+	mockEventBus.EXPECT().Publish(gomock.Any())
+
+	err := manager.DenyToolCall(ctx, "local-mix-001", "dangerous")
+	require.NoError(t, err)
+
+	// Approve second approval - should transition to running
+	mockStore.EXPECT().GetApproval(ctx, "local-mix-002").Return(approvals[1], nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, "local-mix-002", store.ApprovalStatusLocalApproved, "safe").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, "local-mix-002", store.ApprovalStatusApproved).Return(nil)
+	mockStore.EXPECT().GetPendingApprovals(ctx, sessionID).Return(approvals[1:], nil)
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusWaitingInput,
+	}, nil)
+	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+	mockEventBus.EXPECT().Publish(gomock.Any()).Times(2)
+
+	err = manager.ApproveToolCall(ctx, "local-mix-002", "safe")
+	require.NoError(t, err)
 }

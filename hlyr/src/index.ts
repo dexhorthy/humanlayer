@@ -14,6 +14,9 @@ import { launchCommand } from './commands/launch.js'
 import { alertCommand } from './commands/alert.js'
 import { thoughtsCommand } from './commands/thoughts.js'
 import { joinWaitlistCommand } from './commands/joinWaitlist.js'
+import { approveCommand, denyCommand } from './commands/approve.js'
+import { approvalsListCommand } from './commands/approvals.js'
+import { sessionsListCommand, sessionsShowCommand } from './commands/sessions.js'
 import { startDefaultMCPServer, startClaudeApprovalsMCPServer } from './mcp.js'
 import {
   getDefaultConfigPath,
@@ -75,7 +78,7 @@ program
   .description('HumanLayer, but on your command-line.')
   .version(packageJson.version)
 
-const UNPROTECTED_COMMANDS = ['config', 'login', 'thoughts', 'join-waitlist', 'launch', 'mcp']
+const UNPROTECTED_COMMANDS = ['config', 'login', 'thoughts', 'join-waitlist', 'launch', 'mcp', 'approve', 'deny', 'approvals', 'sessions']
 
 program.hook('preAction', async (thisCmd, actionCmd) => {
   // Get the full command path by traversing up the command hierarchy
@@ -177,6 +180,55 @@ program
   .option('--quiet', 'Disable sound notifications')
   .option('--daemon-socket <path>', 'Path to daemon socket')
   .action(alertCommand)
+
+program
+  .command('approve <target>')
+  .description('Approve a pending approval (use "last" for most recent)')
+  .option('--reason <text>', 'Reason for approval')
+  .option('--daemon-socket <path>', 'Path to daemon socket')
+  .action(approveCommand)
+
+program
+  .command('deny <target>')
+  .description('Deny a pending approval (use "last" for most recent)')
+  .option('--reason <text>', 'Reason for denial')
+  .option('--daemon-socket <path>', 'Path to daemon socket')
+  .action(denyCommand)
+
+// Approvals command group
+const approvalsCommand = program.command('approvals').description('Manage approvals')
+
+approvalsCommand
+  .command('list')
+  .description('List approvals')
+  .option('--session <id>', 'Filter by session ID')
+  .option('--pending', 'Show only pending approvals')
+  .option('--limit <n>', 'Limit number of results', parseInt)
+  .option('--daemon-socket <path>', 'Path to daemon socket')
+  .action(approvalsListCommand)
+
+// Sessions command group
+const sessionsCommand = program.command('sessions').description('Manage sessions')
+
+sessionsCommand
+  .command('list')
+  .description('List sessions')
+  .option('--status <status>', 'Filter by status')
+  .option('--recent <n>', 'Show n most recent sessions', parseInt)
+  .option('--since <time>', 'Show sessions since time (e.g., "1 hour ago")')
+  .option('--limit <n>', 'Limit number of results', parseInt)
+  .option('--daemon-socket <path>', 'Path to daemon socket')
+  .action(sessionsListCommand)
+
+sessionsCommand
+  .command('show <id>')
+  .description('Show session details (use "last" for most recent)')
+  .option('--messages', 'Show conversation messages')
+  .option('--events', 'Show session events')
+  .option('--timeline', 'Show timeline of events')
+  .option('--all', 'Show all information')
+  .option('--daemon-socket <path>', 'Path to daemon socket')
+  .action(sessionsShowCommand)
 
 const mcpCommand = program.command('mcp').description('MCP server functionality')
 
