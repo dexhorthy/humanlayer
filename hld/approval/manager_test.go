@@ -56,8 +56,22 @@ func TestManager_CreateApproval(t *testing.T) {
 		assert.Equal(t, toolName, event.Data["tool_name"])
 	})
 
+	// Mock getting session for status change event
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusRunning,
+	}, nil)
+
 	// Mock session status update
 	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+
+	// Mock event publishing for status change
+	mockEventBus.EXPECT().Publish(gomock.Any()).Do(func(event bus.Event) {
+		assert.Equal(t, bus.EventSessionStatusChanged, event.Type)
+		assert.Equal(t, sessionID, event.Data["session_id"])
+		assert.Equal(t, store.SessionStatusRunning, event.Data["old_status"])
+		assert.Equal(t, store.SessionStatusWaitingInput, event.Data["new_status"])
+	})
 
 	// Create approval
 	approvalID, err := manager.CreateApproval(ctx, runID, toolName, toolInput)
@@ -162,8 +176,22 @@ func TestManager_ApproveToolCall(t *testing.T) {
 		assert.Equal(t, comment, event.Data["response_text"])
 	})
 
+	// Mock getting session for status change event
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusWaitingInput,
+	}, nil)
+
 	// Mock session status update
 	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+
+	// Mock event publishing for status change
+	mockEventBus.EXPECT().Publish(gomock.Any()).Do(func(event bus.Event) {
+		assert.Equal(t, bus.EventSessionStatusChanged, event.Type)
+		assert.Equal(t, sessionID, event.Data["session_id"])
+		assert.Equal(t, store.SessionStatusWaitingInput, event.Data["old_status"])
+		assert.Equal(t, store.SessionStatusRunning, event.Data["new_status"])
+	})
 
 	err := manager.ApproveToolCall(ctx, approvalID, comment)
 	require.NoError(t, err)
@@ -208,8 +236,22 @@ func TestManager_DenyToolCall(t *testing.T) {
 		assert.Equal(t, reason, event.Data["response_text"])
 	})
 
+	// Mock getting session for status change event
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusWaitingInput,
+	}, nil)
+
 	// Mock session status update
 	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+
+	// Mock event publishing for status change
+	mockEventBus.EXPECT().Publish(gomock.Any()).Do(func(event bus.Event) {
+		assert.Equal(t, bus.EventSessionStatusChanged, event.Type)
+		assert.Equal(t, sessionID, event.Data["session_id"])
+		assert.Equal(t, store.SessionStatusWaitingInput, event.Data["old_status"])
+		assert.Equal(t, store.SessionStatusRunning, event.Data["new_status"])
+	})
 
 	err := manager.DenyToolCall(ctx, approvalID, reason)
 	require.NoError(t, err)
@@ -253,11 +295,83 @@ func TestManager_CorrelateApproval(t *testing.T) {
 	// Mock event publishing
 	mockEventBus.EXPECT().Publish(gomock.Any())
 
+	// Mock getting session for status change event
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusRunning,
+	}, nil)
+
 	// Mock session status update
 	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+
+	// Mock event publishing for status change
+	mockEventBus.EXPECT().Publish(gomock.Any())
 
 	// Create approval (which will attempt correlation)
 	approvalID, err := manager.CreateApproval(ctx, runID, toolName, toolInput)
 	require.NoError(t, err)
 	assert.NotEmpty(t, approvalID)
+}
+
+func TestApprovalManager_EmitsStatusChangeEvent(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockStore := store.NewMockConversationStore(ctrl)
+	mockEventBus := bus.NewMockEventBus(ctrl)
+
+	manager := NewManager(mockStore, mockEventBus).(*manager)
+
+	ctx := context.Background()
+	sessionID := "test-session-123"
+	approvalID := "local-approval-789"
+
+	// Create mock approval
+	approval := &store.Approval{
+		ID:        approvalID,
+		SessionID: sessionID,
+		Status:    store.ApprovalStatusLocalPending,
+		ToolName:  "Write",
+	}
+
+	// Setup mocks for ApproveToolCall flow
+	mockStore.EXPECT().GetApproval(ctx, approvalID).Return(approval, nil)
+	mockStore.EXPECT().UpdateApprovalResponse(ctx, approvalID, store.ApprovalStatusLocalApproved, "approved").Return(nil)
+	mockStore.EXPECT().UpdateApprovalStatus(ctx, approvalID, store.ApprovalStatusApproved).Return(nil)
+
+	// Mock session in waiting_input status
+	mockStore.EXPECT().GetSession(ctx, sessionID).Return(&store.Session{
+		ID:     sessionID,
+		Status: store.SessionStatusWaitingInput,
+	}, nil)
+
+	// Mock successful status update
+	mockStore.EXPECT().UpdateSession(ctx, sessionID, gomock.Any()).Return(nil)
+
+	// Capture published events
+	var publishedEvents []bus.Event
+	mockEventBus.EXPECT().Publish(gomock.Any()).Do(func(event bus.Event) {
+		publishedEvents = append(publishedEvents, event)
+	}).Times(2) // Expect exactly 2 events: approval resolved and status change
+
+	// Test: Approve tool call
+	err := manager.ApproveToolCall(ctx, approvalID, "approved")
+	require.NoError(t, err)
+
+	// Verify: Both events were published
+	require.Len(t, publishedEvents, 2)
+
+	// Find status change event
+	var statusEvent *bus.Event
+	for _, e := range publishedEvents {
+		if e.Type == bus.EventSessionStatusChanged {
+			statusEvent = &e
+			break
+		}
+	}
+
+	require.NotNil(t, statusEvent, "Expected status change event to be published")
+	require.Equal(t, sessionID, statusEvent.Data["session_id"])
+	require.Equal(t, store.SessionStatusWaitingInput, statusEvent.Data["old_status"])
+	require.Equal(t, store.SessionStatusRunning, statusEvent.Data["new_status"])
 }

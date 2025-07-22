@@ -252,13 +252,44 @@ func (m *manager) publishApprovalResolvedEvent(approval *store.Approval, approve
 	}
 }
 
-// updateSessionStatus updates the session status
+// updateSessionStatus updates the session status and emits status change event
 func (m *manager) updateSessionStatus(ctx context.Context, sessionID, status string) error {
+	// Get current status for the event
+	session, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+	oldStatus := session.Status
+
+	// Update database
 	updates := store.SessionUpdate{
 		Status:         &status,
 		LastActivityAt: &[]time.Time{time.Now()}[0],
 	}
-	return m.store.UpdateSession(ctx, sessionID, updates)
+	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+		return err
+	}
+
+	// Emit event for UI updates (only if status actually changed)
+	if m.eventBus != nil && oldStatus != status {
+		event := bus.Event{
+			Type:      bus.EventSessionStatusChanged,
+			Timestamp: time.Now(),
+			Data: map[string]interface{}{
+				"session_id": sessionID,
+				"old_status": oldStatus,
+				"new_status": status,
+			},
+		}
+		m.eventBus.Publish(event)
+
+		slog.Debug("published session status change event",
+			"session_id", sessionID,
+			"old_status", oldStatus,
+			"new_status", status)
+	}
+
+	return nil
 }
 
 // isEditTool checks if a tool name is one of the edit tools
