@@ -117,14 +117,17 @@ This document outlines architectural improvements for the HumanLayer local tools
 **Impact**: Significant performance improvement (no repeated file I/O), easier configuration management, better error messages, maintains backward compatibility
 **Completion Date**: 2025-07-22
 
-### 12. Extract Command Registration in hlyr
+### 12. Extract Command Registration in hlyr ✅ COMPLETED
 **Problem**: index.ts is 247 lines with mixed concerns.
 **Solution**:
-- Create `commands/registry.ts` for command registration
-- Move authentication hook logic to separate module
-- Create command interface for consistent implementation
-- Add command documentation generation
-**Impact**: Better code organization, easier to add new commands
+- ✅ Created `commands/registry.ts` with CommandRegistry class for centralized command management
+- ✅ Defined consistent RegisteredCommand interface for all commands
+- ✅ Moved all command definitions to use the registry pattern
+- ✅ Authentication hook now uses registry to check requiresAuth flag
+- ✅ Added generateDocumentation() method for automatic docs generation
+- ✅ Reduced index.ts from 247 lines to 99 lines
+**Impact**: Better code organization, easier to add new commands, automatic documentation generation, consistent command structure
+**Completion Date**: 2025-07-23
 
 ## Priority 5: Testing and Observability
 
