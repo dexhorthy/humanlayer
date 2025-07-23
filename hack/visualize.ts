@@ -331,6 +331,8 @@ async function processStream() {
   const debugMode = process.argv.includes('--debug');
   const toolCalls = new Map(); // Store tool calls by their ID
   const pendingResults = new Map(); // Store results waiting for their tool calls
+  let lastLine = null; // Track the last line to detect final message
+  let isLastAssistantMessage = false;
 
   rl.on('line', (line) => {
     if (line.trim()) {
@@ -393,10 +395,20 @@ async function processStream() {
             });
           }
         }
+        // Check if this is the result message and display full content
+        else if (json.type === 'result' && json.result) {
+          process.stdout.write(`${timestamp + formatConcise(json)}\n\n`);
+          process.stdout.write(`${colors.bright}${colors.green}=== Final Result ===${colors.reset}\n\n`);
+          process.stdout.write(`${json.result}\n`);
+        }
         // For all other message types, display normally
         else {
           process.stdout.write(`${timestamp + formatConcise(json)}\n\n`);
         }
+
+        // Track if this might be the last assistant message
+        lastLine = json;
+        isLastAssistantMessage = json.type === 'assistant' && !json.message?.content?.[0]?.id;
       } catch (_error) {
         process.stdout.write(`${timestamp}${colors.red}⏺ Parse Error${colors.reset}\n`);
         process.stdout.write(`  ⎿  ${colors.dim}${line.substring(0, 50)}...${colors.reset}\n\n`);
@@ -404,8 +416,13 @@ async function processStream() {
     }
   });
 
-  // Keep the process alive
-  return new Promise(() => {});
+  rl.on('close', () => {
+    // If the last message was an assistant message (not a tool call), display the full content
+    if (isLastAssistantMessage && lastLine?.message?.content?.[0]?.text) {
+      process.stdout.write(`\n${colors.bright}${colors.green}=== Final Assistant Message ===${colors.reset}\n\n`);
+      process.stdout.write(`${lastLine.message.content[0].text}\n`);
+    }
+  });
 }
 
 function displayToolCallWithResult(

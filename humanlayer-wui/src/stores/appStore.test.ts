@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from 'bun:test'
+import { describe, test, expect, beforeEach } from 'vitest'
 import { createRealAppStore, AppState } from './appStore'
 import type { SessionInfo, Approval } from '@/lib/daemon/types'
 import { ViewMode, ApprovalStatus } from '@/lib/daemon/types'

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import { create } from 'zustand'
 import { createThemeSlice, ThemeSlice, Theme } from './themeSlice'
 import { createStoreTest, testInitialState } from '../test-utils'

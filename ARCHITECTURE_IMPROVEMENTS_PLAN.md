@@ -108,7 +108,7 @@ This document outlines architectural improvements for the HumanLayer local tools
 **Problem**: Configuration system is complex with multiple layers and sources.
 **Solution**:
 - ✅ Implemented singleton ConfigManager pattern to eliminate repeated file reads
-- ✅ Added in-memory caching of parsed configurations and resolved values  
+- ✅ Added in-memory caching of parsed configurations and resolved values
 - ✅ Simplified the resolution chain with clear precedence: flags > env > config > defaults
 - ✅ Added configuration validation at load time with clear error messages
 - ✅ Created comprehensive configuration documentation (CONFIG.md)

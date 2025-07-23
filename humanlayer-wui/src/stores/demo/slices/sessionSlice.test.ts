@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from 'bun:test'
+import { describe, test, expect, beforeEach } from 'vitest'
 import { create } from 'zustand'
 import { createMockSessions } from '@/test-utils'
 import { createSessionSlice, SessionSlice } from './sessionSlice'

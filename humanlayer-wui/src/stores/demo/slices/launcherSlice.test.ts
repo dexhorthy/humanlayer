@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from 'bun:test'
+import { describe, test, expect, beforeEach } from 'vitest'
 import { create } from 'zustand'
 import { createLauncherSlice, LauncherSlice } from './launcherSlice'
 import { createStoreTest, testInitialState, createNavigationTests } from '../test-utils'

@@ -1,5 +1,5 @@
 import { StoreApi } from 'zustand'
-import { expect } from 'bun:test'
+import { expect } from 'vitest'
 import { ApprovalStatus, Approval } from '@/lib/daemon/types'
 
 /**
