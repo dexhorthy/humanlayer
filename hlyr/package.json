@@ -19,6 +19,7 @@
     "build:watch": "tsup src/index.ts --format esm --target es2020 --watch",
     "dev": "npm run build && ./dist/index.js",
     "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",

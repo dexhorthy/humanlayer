@@ -38,8 +38,8 @@ test-watch: ## Run tests in watch mode
 
 check-quiet: ## Run all quality checks with quiet output
 	@. ../hack/run_silent.sh && print_header "hlyr" "CLI tool checks"
-	@. ../hack/run_silent.sh && run_silent "Format check passed" "npm run format:check"
-	@. ../hack/run_silent.sh && run_silent "Lint check passed" "npm run lint"
+	@. ../hack/run_silent.sh && run_silent "Format check passed" "npm run format:check || (npm run format && exit 1)"
+	@. ../hack/run_silent.sh && run_silent "Lint check passed" "npm run lint || (npm run lint:fix && exit 1)"
 	@. ../hack/run_silent.sh && run_silent_with_test_count "Tests passed" "npm run test" "vitest"
 	@. ../hack/run_silent.sh && run_with_quiet "Build completed" "npm run build"
 
