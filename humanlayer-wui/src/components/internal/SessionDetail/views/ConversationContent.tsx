@@ -98,8 +98,19 @@ export function ConversationContent({
 
   const displayObjects = filteredEvents
     .filter(event => event.event_type !== ConversationEventType.ToolResult)
-    .map(event =>
-      eventToDisplayObject(
+    .map(event => {
+      // Log approval events
+      if (event.approval_status) {
+        console.log('[ConversationContent] Processing approval event:', {
+          eventId: event.id,
+          approvalId: event.approval_id,
+          approvalStatus: event.approval_status,
+          hasOnApprove: !!onApprove,
+          hasOnDeny: !!onDeny,
+          toolName: event.tool_name
+        })
+      }
+      return eventToDisplayObject(
         event,
         onApprove,
         onDeny,
@@ -113,8 +124,8 @@ export function ConversationContent({
         event.tool_id ? toolResultsByKey[event.tool_id] : undefined,
         focusedEventId === event.id,
         getSnapshot,
-      ),
-    )
+      )
+    })
   const nonEmptyDisplayObjects = displayObjects.filter(displayObject => displayObject !== null)
 
   // Note: Navigation is handled by the parent component via props

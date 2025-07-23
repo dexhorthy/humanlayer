@@ -428,10 +428,36 @@ export function eventToDisplayObject(
       )
     }
 
+    // Log ALL pending approvals whether or not they'll get buttons
+    if (event.approval_status === ApprovalStatus.Pending) {
+      console.log('[eventToDisplayObject] Pending approval detected:', {
+        eventId: event.id,
+        approvalId: event.approval_id,
+        hasApprovalId: !!event.approval_id,
+        hasOnApprove: !!onApprove,
+        hasOnDeny: !!onDeny,
+        willGetButtons: !!(event.approval_id && onApprove && onDeny),
+        toolName: event.tool_name
+      })
+    }
+
     // Add approve/deny buttons for pending approvals
     if (event.approval_status === ApprovalStatus.Pending && event.approval_id && onApprove && onDeny) {
       const isDenying = denyingApprovalId === event.approval_id
       const isApproving = approvingApprovalId === event.approval_id
+
+      console.log('[eventToDisplayObject] Approval buttons check:', {
+        eventId: event.id,
+        approvalId: event.approval_id,
+        approvalStatus: event.approval_status,
+        hasOnApprove: !!onApprove,
+        hasOnDeny: !!onDeny,
+        isDenying,
+        isApproving,
+        willShowButtons: true,
+        toolName: event.tool_name,
+        timestamp: new Date().toISOString()
+      })
 
       body = (
         <div className="mt-4 flex gap-2 justify-end">

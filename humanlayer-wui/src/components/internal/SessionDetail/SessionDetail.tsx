@@ -205,6 +205,18 @@ function SessionDetail({ session, onClose }: SessionDetailProps) {
     setFocusSource: navigation.setFocusSource,
   })
 
+  // Debug effect to log approval handler availability
+  useEffect(() => {
+    const pendingApprovals = events.filter(e => e.approval_status === 'pending')
+    console.log('[SessionDetail] Approval handlers state:', {
+      hasHandleApprove: !!approvals.handleApprove,
+      hasHandleDeny: !!approvals.handleDeny,
+      pendingApprovalsCount: pendingApprovals.length,
+      pendingApprovalIds: pendingApprovals.map(e => e.approval_id),
+      timestamp: new Date().toISOString()
+    })
+  }, [events, approvals.handleApprove, approvals.handleDeny])
+
   // Use clipboard hook
   const focusedEvent = events.find(e => e.id === navigation.focusedEventId) || null
   useSessionClipboard(focusedEvent, !expandedToolResult && !forkViewOpen)

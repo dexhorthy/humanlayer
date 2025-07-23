@@ -37,6 +37,22 @@ export function useConversation(
       setError(null)
 
       const response = await daemonClient.getConversation(sessionId, claudeSessionId)
+
+      // Log events with pending approvals
+      const pendingApprovals = response.events.filter(e => e.approval_status === 'pending')
+      if (pendingApprovals.length > 0) {
+        console.log('[useConversation] Found pending approvals:', {
+          sessionId,
+          count: pendingApprovals.length,
+          approvals: pendingApprovals.map(e => ({
+            eventId: e.id,
+            approvalId: e.approval_id,
+            toolName: e.tool_name,
+            status: e.approval_status
+          }))
+        })
+      }
+
       setEvents(response.events)
       setErrorCount(0)
       setIsInitialLoad(false)

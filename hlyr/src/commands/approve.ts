@@ -11,7 +11,7 @@ interface ApproveOptions {
 async function getPendingApprovals(client: any): Promise<any[]> {
   const sessions = await client.listSessions()
   const allApprovals = []
-  
+
   for (const session of sessions.sessions) {
     if (session.status === 'waiting_input') {
       const approvals = await client.fetchApprovals(session.id)
@@ -21,32 +21,32 @@ async function getPendingApprovals(client: any): Promise<any[]> {
       }
     }
   }
-  
-  return allApprovals.sort((a, b) => 
+
+  return allApprovals.sort((a, b) =>
     new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   )
 }
 
 export async function approveCommand(target: string, options: ApproveOptions): Promise<void> {
   const socketPath = options.daemonSocket || join(homedir(), '.humanlayer', 'daemon.sock')
-  
+
   try {
     const client = await connectWithRetry(socketPath)
-    
+
     let approvalId: string
-    
+
     if (target === 'last') {
       // Get the most recent pending approval
       const pendingApprovals = await getPendingApprovals(client)
-      
+
       if (pendingApprovals.length === 0) {
         console.log(chalk.yellow('No pending approvals found'))
         process.exit(0)
       }
-      
+
       const approval = pendingApprovals[0]
       approvalId = approval.id
-      
+
       console.log(chalk.blue('Approving most recent pending approval:'))
       console.log(chalk.gray(`  ID: ${approval.id}`))
       console.log(chalk.gray(`  Tool: ${approval.tool_name}`))
@@ -55,7 +55,7 @@ export async function approveCommand(target: string, options: ApproveOptions): P
     } else {
       // Use provided approval ID
       approvalId = target
-      
+
       // Verify the approval exists and is pending
       try {
         const approval = await client.getApproval(approvalId)
@@ -63,7 +63,7 @@ export async function approveCommand(target: string, options: ApproveOptions): P
           console.error(chalk.red(`Approval ${approvalId} is already ${approval.status}`))
           process.exit(1)
         }
-        
+
         console.log(chalk.blue('Approving:'))
         console.log(chalk.gray(`  ID: ${approval.id}`))
         console.log(chalk.gray(`  Tool: ${approval.tool_name}`))
@@ -73,12 +73,12 @@ export async function approveCommand(target: string, options: ApproveOptions): P
         process.exit(1)
       }
     }
-    
+
     // Send approval decision
     await client.sendDecision(approvalId, 'approve', options.reason || 'Approved via CLI')
-    
+
     console.log(chalk.green('✓ Approval sent successfully'))
-    
+
     client.close()
   } catch (error) {
     console.error(chalk.red('Failed to approve:'), error)
@@ -88,24 +88,24 @@ export async function approveCommand(target: string, options: ApproveOptions): P
 
 export async function denyCommand(target: string, options: ApproveOptions): Promise<void> {
   const socketPath = options.daemonSocket || join(homedir(), '.humanlayer', 'daemon.sock')
-  
+
   try {
     const client = await connectWithRetry(socketPath)
-    
+
     let approvalId: string
-    
+
     if (target === 'last') {
       // Get the most recent pending approval
       const pendingApprovals = await getPendingApprovals(client)
-      
+
       if (pendingApprovals.length === 0) {
         console.log(chalk.yellow('No pending approvals found'))
         process.exit(0)
       }
-      
+
       const approval = pendingApprovals[0]
       approvalId = approval.id
-      
+
       console.log(chalk.blue('Denying most recent pending approval:'))
       console.log(chalk.gray(`  ID: ${approval.id}`))
       console.log(chalk.gray(`  Tool: ${approval.tool_name}`))
@@ -114,7 +114,7 @@ export async function denyCommand(target: string, options: ApproveOptions): Prom
     } else {
       // Use provided approval ID
       approvalId = target
-      
+
       // Verify the approval exists and is pending
       try {
         const approval = await client.getApproval(approvalId)
@@ -122,7 +122,7 @@ export async function denyCommand(target: string, options: ApproveOptions): Prom
           console.error(chalk.red(`Approval ${approvalId} is already ${approval.status}`))
           process.exit(1)
         }
-        
+
         console.log(chalk.blue('Denying:'))
         console.log(chalk.gray(`  ID: ${approval.id}`))
         console.log(chalk.gray(`  Tool: ${approval.tool_name}`))
@@ -132,12 +132,12 @@ export async function denyCommand(target: string, options: ApproveOptions): Prom
         process.exit(1)
       }
     }
-    
+
     // Send denial decision
     await client.sendDecision(approvalId, 'deny', options.reason || 'Denied via CLI')
-    
+
     console.log(chalk.green('✓ Denial sent successfully'))
-    
+
     client.close()
   } catch (error) {
     console.error(chalk.red('Failed to deny:'), error)

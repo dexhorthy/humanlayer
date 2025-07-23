@@ -170,7 +170,7 @@ func (m *manager) ApproveToolCall(ctx context.Context, id string, comment string
 			otherPendingCount++
 		}
 	}
-	
+
 	if otherPendingCount == 0 {
 		if err := m.updateSessionStatus(ctx, approval.SessionID, store.SessionStatusRunning); err != nil {
 			slog.Warn("failed to update session status",
@@ -243,7 +243,7 @@ func (m *manager) DenyToolCall(ctx context.Context, id string, reason string) er
 			otherPendingCount++
 		}
 	}
-	
+
 	if otherPendingCount == 0 {
 		if err := m.updateSessionStatus(ctx, approval.SessionID, store.SessionStatusRunning); err != nil {
 			slog.Warn("failed to update session status",

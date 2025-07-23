@@ -172,6 +172,8 @@ Would you like me to investigate something specific further?
 ```bash
 ls -t ~/.humanlayer/logs/daemon-*.log | head -1
 ls -t ~/.humanlayer/logs/wui-*.log | head -1
+# To monitor logs, use: tail -n 50 <logfile> or sleep 3 && tail -n 100 <logfile>
+# NEVER use tail -f as it blocks
 ```
 
 **Database Queries**:
@@ -195,3 +197,11 @@ git diff
 ```
 
 Remember: This command helps you investigate without burning the primary window's context. Perfect for when you hit an issue during manual testing and need to dig into logs, database, or git state.
+
+## See Also
+
+For comprehensive debugging tools and techniques, see debugging.md which includes:
+- CLI commands for approvals and sessions
+- Timeline analysis for detecting missing events
+- Advanced troubleshooting scenarios
+- Direct database query examples

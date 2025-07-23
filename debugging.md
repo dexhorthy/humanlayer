@@ -196,9 +196,9 @@ DB_PATH=~/.humanlayer/dev/daemon-2025-07-22-06-02-21.db
 
 # Recent sessions
 sqlite3 $DB_PATH "
-  SELECT id, status, created_at, updated_at 
-  FROM sessions 
-  ORDER BY created_at DESC 
+  SELECT id, status, created_at, updated_at
+  FROM sessions
+  ORDER BY created_at DESC
   LIMIT 10;
 "
 
@@ -237,24 +237,25 @@ tail -f ~/.humanlayer/logs/daemon-dev-*.log
 ```
 
 ### Approval Not Appearing
-1. Check session status: `npx humanlayer sessions show <id>`
-2. Check daemon logs for errors: `tail -f ~/.humanlayer/logs/daemon-*.log`
-3. Verify approval was created: `npx humanlayer approvals list --session <id>`
+1. Check session status: `npx humanlayer sessions show <id> --daemon-socket ~/.humanlayer/daemon-dev.sock`
+2. Check daemon logs for errors: `tail -f ~/.humanlayer/logs/daemon-dev-*.log`
+3. Verify approval was created: `npx humanlayer approvals list --session <id> --daemon-socket ~/.humanlayer/daemon-dev.sock`
 
 ### Session Stuck in waiting_input
-1. List pending approvals: `npx humanlayer approvals list --pending --session <id>`
+1. List pending approvals: `npx humanlayer approvals list --pending --session <id> --daemon-socket ~/.humanlayer/daemon-dev.sock`
 2. Check for multiple pending approvals
 3. Approve/deny all pending approvals
-4. Check if status changes: `npx humanlayer sessions show <id>`
+4. Check if status changes: `npx humanlayer sessions show <id> --daemon-socket ~/.humanlayer/daemon-dev.sock`
 
 ## Environment Variables
 
 ```bash
 # Enable debug logging
-HUMANLAYER_DEBUG=true npx humanlayer approve last
+HUMANLAYER_DEBUG=true npx humanlayer approve last --daemon-socket ~/.humanlayer/daemon-dev.sock
 
-# Use different daemon socket
-HUMANLAYER_DAEMON_SOCKET=/tmp/test-daemon.sock npx humanlayer sessions list
+# Set default daemon socket for all commands
+export HUMANLAYER_DAEMON_SOCKET=~/.humanlayer/daemon-dev.sock
+npx humanlayer sessions list  # Now uses dev daemon by default
 ```
 
 ## Best Practices
