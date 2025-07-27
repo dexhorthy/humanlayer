@@ -25,9 +25,15 @@ WORKTREE_NAME=${1:-$(generate_unique_name)}
 # Get base directory name (should be 'humanlayer')
 REPO_BASE_NAME=$(basename "$(pwd)")
 
+if [ ! -z "${WORKTREE_OVERRIDE_PREFIX}" ]; then
+    WORKTREES_BASE="${WORKTREE_OVERRIDE_PREFIX}/${REPO_BASE_NAME}"
+    WORKTREE_DIR_NAME="${WORKTREE_NAME}"
+else
+    WORKTREES_BASE="$HOME/.humanlayer/worktrees"
+    WORKTREE_DIR_NAME="${REPO_BASE_NAME}_${WORKTREE_NAME}"
+fi
+
 # Construct paths
-WORKTREE_DIR_NAME="${REPO_BASE_NAME}_${WORKTREE_NAME}"
-WORKTREES_BASE="$HOME/wt/humanlayer"
 WORKTREE_PATH="${WORKTREES_BASE}/${WORKTREE_DIR_NAME}"
 
 echo "🌳 Creating worktree: ${WORKTREE_NAME}"
