@@ -183,3 +183,11 @@ cython_debug/
 hlyr/blah.txt
 hld/hld-dev
 hld/hld-nightly
+
+# Claude proxy logs and runtime files
+claude-api-logs/
+/tmp/claude-proxy.pid
+/tmp/claude-openai-proxy.pid
+/tmp/claude-proxy.log
+/tmp/claude-openai-proxy.log
+proxy.log
