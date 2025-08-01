@@ -3,6 +3,13 @@ docs/source
 humanlayer-tui/humanlayer-tui
 claude_output.jsonl
 
+# Claude proxy logs and runtime files
+claude-api-logs/
+/tmp/claude-proxy.pid
+/tmp/claude-openai-proxy.pid
+*.pid
+proxy.log
+
 # From https://raw.githubusercontent.com/github/gitignore/main/Python.gitignore
 
 # Byte-compiled / optimized / DLL files
