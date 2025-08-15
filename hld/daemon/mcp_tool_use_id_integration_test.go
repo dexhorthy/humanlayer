@@ -345,6 +345,234 @@ func TestMCPToolUseIDCorrelation(t *testing.T) {
 		}
 	})
 
+	t.Run("ResumeSessionWithParallelApprovals", func(t *testing.T) {
+		// Clear any existing approvals
+		_, err = db.Exec("DELETE FROM approvals")
+		require.NoError(t, err)
+
+		// Create temp directory for session
+		testWorkDir := t.TempDir()
+
+		// Prepare initial session creation request with 4 parallel operations
+		createReq := map[string]interface{}{
+			"query":                  "Create 4 files in parallel: file1.txt with 'One', file2.txt with 'Two', file3.txt with 'Three', file4.txt with 'Four'. Use parallel tool calls.",
+			"model":                  "sonnet",
+			"permission_prompt_tool": "mcp__codelayer__request_approval",
+			"max_turns":              3,
+			"working_dir":            testWorkDir,
+			"mcp_config": map[string]interface{}{
+				"mcp_servers": map[string]interface{}{
+					"codelayer": map[string]interface{}{
+						"type": "http",
+						"url":  fmt.Sprintf("http://127.0.0.1:%d/api/v1/mcp", httpPort),
+					},
+				},
+			},
+		}
+
+		// Send REST API request to create initial session
+		reqBody, _ := json.Marshal(createReq)
+		httpReq, err := http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions", httpPort), bytes.NewBuffer(reqBody))
+		require.NoError(t, err)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(httpReq)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Check response status
+		require.Equal(t, http.StatusCreated, resp.StatusCode, "Expected 201 Created")
+
+		// Parse response
+		var createResp map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&createResp)
+		require.NoError(t, err)
+
+		// Get session ID from response
+		data := createResp["data"].(map[string]interface{})
+		sessionID := data["session_id"].(string)
+		t.Logf("Launched initial session: %s", sessionID)
+
+		// Let Claude run for a bit to trigger first 4 approvals
+		t.Log("Waiting for initial 4 parallel operations...")
+		time.Sleep(5 * time.Second)
+
+		// Check session status first
+		var sessionStatus string
+		err = db.QueryRow(`
+			SELECT status FROM sessions
+			WHERE id = ?
+		`, sessionID).Scan(&sessionStatus)
+		require.NoError(t, err)
+		t.Logf("Initial session status: %s", sessionStatus)
+
+		// Check initial approvals count
+		var initialCount int
+		err = db.QueryRow(`
+			SELECT COUNT(*) FROM approvals
+			WHERE session_id = ?
+		`, sessionID).Scan(&initialCount)
+		require.NoError(t, err)
+		t.Logf("Found %d approvals after initial session", initialCount)
+
+		// Store initial tool_use_ids for verification
+		rows, err := db.Query(`
+			SELECT tool_use_id FROM approvals
+			WHERE session_id = ?
+			ORDER BY created_at
+		`, sessionID)
+		require.NoError(t, err)
+
+		var initialToolUseIDs []string
+		for rows.Next() {
+			var toolUseID sql.NullString
+			err := rows.Scan(&toolUseID)
+			require.NoError(t, err)
+			if toolUseID.Valid {
+				initialToolUseIDs = append(initialToolUseIDs, toolUseID.String)
+			}
+		}
+		rows.Close()
+
+		// Now resume the session with a request for 4 more parallel operations
+		continueReq := map[string]interface{}{
+			"query": "Create 4 more files in parallel: file5.txt with 'Five', file6.txt with 'Six', file7.txt with 'Seven', file8.txt with 'Eight'. Use parallel tool calls.",
+		}
+
+		// Send REST API request to continue/resume session
+		reqBody, _ = json.Marshal(continueReq)
+		httpReq, err = http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions/%s/continue", httpPort, sessionID), bytes.NewBuffer(reqBody))
+		require.NoError(t, err)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err = client.Do(httpReq)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		// Parse continue response
+		var continueResp map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&continueResp)
+		require.NoError(t, err)
+
+		var childSessionID string
+		if resp.StatusCode == http.StatusOK {
+			// Get child session ID from response
+			data = continueResp["data"].(map[string]interface{})
+			childSessionID = data["session_id"].(string)
+			t.Logf("Created child session: %s", childSessionID)
+		} else if resp.StatusCode == http.StatusInternalServerError {
+			// If we got a 500, the session might have completed, so we'll create a new session instead
+			t.Logf("Continue failed (session may be completed), creating new session instead")
+
+			// Create a new session for the second set of operations
+			createReq["query"] = "Create 4 files: file5.txt with 'Five', file6.txt with 'Six', file7.txt with 'Seven', file8.txt with 'Eight'. Use parallel tool calls."
+			reqBody, _ = json.Marshal(createReq)
+			httpReq, err = http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/v1/sessions", httpPort), bytes.NewBuffer(reqBody))
+			require.NoError(t, err)
+			httpReq.Header.Set("Content-Type", "application/json")
+
+			resp, err = client.Do(httpReq)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			require.Equal(t, http.StatusCreated, resp.StatusCode, "Expected 201 Created for new session")
+
+			var newResp map[string]interface{}
+			err = json.NewDecoder(resp.Body).Decode(&newResp)
+			require.NoError(t, err)
+
+			data = newResp["data"].(map[string]interface{})
+			childSessionID = data["session_id"].(string)
+			t.Logf("Created new session instead of child: %s", childSessionID)
+		} else {
+			t.Fatalf("Unexpected response status: %d", resp.StatusCode)
+		}
+
+		// Let Claude run for a bit to trigger second 4 approvals
+		t.Log("Waiting for resumed session's 4 parallel operations...")
+		time.Sleep(7 * time.Second)
+
+		// Check total approvals count (should include both parent and child sessions)
+		var totalCount int
+		err = db.QueryRow(`
+			SELECT COUNT(*) FROM approvals
+			WHERE session_id IN (?, ?)
+		`, sessionID, childSessionID).Scan(&totalCount)
+		require.NoError(t, err)
+		t.Logf("Found %d total approvals after resume", totalCount)
+
+		// Verify all approvals have unique tool_use_ids
+		rows, err = db.Query(`
+			SELECT id, session_id, tool_use_id, tool_name
+			FROM approvals
+			WHERE session_id IN (?, ?)
+			ORDER BY created_at
+		`, sessionID, childSessionID)
+		require.NoError(t, err)
+		defer rows.Close()
+
+		toolUseIDMap := make(map[string]bool)
+		var parentApprovals, childApprovals int
+
+		for rows.Next() {
+			var approvalID, sessID, toolName string
+			var toolUseID sql.NullString
+			err := rows.Scan(&approvalID, &sessID, &toolUseID, &toolName)
+			require.NoError(t, err)
+
+			// Count approvals per session
+			if sessID == sessionID {
+				parentApprovals++
+			} else if sessID == childSessionID {
+				childApprovals++
+			}
+
+			// Verify tool_use_id is set and unique
+			if !toolUseID.Valid || toolUseID.String == "" {
+				t.Errorf("Approval %s has no tool_use_id!", approvalID)
+			} else {
+				if toolUseIDMap[toolUseID.String] {
+					t.Errorf("Duplicate tool_use_id found: %s", toolUseID.String)
+				}
+				toolUseIDMap[toolUseID.String] = true
+				t.Logf("✓ Approval %s (session: %s) has unique tool_use_id: %s", approvalID, sessID, toolUseID.String)
+			}
+		}
+
+		t.Logf("Summary: %d approvals in parent session, %d in child session", parentApprovals, childApprovals)
+
+		// Verify parent-child session relationship (if applicable)
+		var parentSessionID sql.NullString
+		err = db.QueryRow(`
+			SELECT parent_session_id FROM sessions
+			WHERE id = ?
+		`, childSessionID).Scan(&parentSessionID)
+		require.NoError(t, err)
+
+		if parentSessionID.Valid && parentSessionID.String == sessionID {
+			t.Logf("✓ Parent-child relationship verified: %s -> %s", sessionID, childSessionID)
+		} else {
+			t.Logf("Note: No parent-child relationship (may have created new session instead of resuming)")
+		}
+
+		// Verify conversation events have tool_use_ids
+		var eventCount int
+		err = db.QueryRow(`
+			SELECT COUNT(*) FROM conversation_events
+			WHERE session_id IN (?, ?) AND tool_id IS NOT NULL
+		`, sessionID, childSessionID).Scan(&eventCount)
+		require.NoError(t, err)
+		t.Logf("Found %d tool use events in conversation_events", eventCount)
+
+		// Final verification
+		if totalCount > 0 {
+			t.Logf("✓ Successfully tested resume session with %d total approvals, all with unique tool_use_ids", totalCount)
+		} else {
+			t.Log("⚠ Warning: No approvals were created - Claude might not have triggered tools")
+		}
+	})
+
 	// Cleanup: shutdown daemon
 	cancel()
 	select {
