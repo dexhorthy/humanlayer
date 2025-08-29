@@ -328,17 +328,28 @@ class NotificationService {
   /**
    * Convenience method for approval required notifications
    */
-  async notifyApprovalRequired(sessionId: string, approvalId: string, query: string, model?: string) {
-    const body = this.formatQueryBody(query, model)
+  async notifyApprovalRequired(
+    sessionId: string, 
+    approvalId: string, 
+    toolName: string,
+    sessionTitle?: string,
+    toolArgs?: string
+  ) {
+    // Use new concise format for approval notifications
+    const title = 'NEEDS_APPROVAL'
+    const sessionText = sessionTitle ? this.truncateText(sessionTitle, 20) : `Session ${sessionId.slice(0, 8)}`
+    const argsText = toolArgs ? this.truncateText(toolArgs, 30) : ''
+    const toolCall = argsText ? `${toolName}(${argsText})` : `${toolName}(...)`
+    const body = `${sessionText}\n${toolCall}`
 
     return this.notify({
       type: 'approval_required',
-      title: `Approval Requested (${sessionId.slice(0, 8)})`,
+      title,
       body,
       metadata: {
         sessionId,
         approvalId,
-        model,
+        toolName,
       },
       duration: Infinity, // Approval notifications should stick until dismissed
       actions: [
@@ -353,18 +364,12 @@ class NotificationService {
   }
 
   /**
-   * Format query for notification body
+   * Truncate text to specified length with ellipsis
    */
-  private formatQueryBody(query: string, model?: string): string {
-    // Truncate query to 100 chars
-    const truncatedQuery = query.length > 100 ? query.substring(0, 97) + '...' : query
-
-    if (model) {
-      return `${model}: ${truncatedQuery}`
-    }
-
-    return truncatedQuery
+  private truncateText(text: string, maxLength: number): string {
+    return text.length > maxLength ? text.slice(0, maxLength) + '...' : text
   }
+
 
   /**
    * Get current focus state

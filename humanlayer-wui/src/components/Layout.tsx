@@ -210,13 +210,14 @@ export function Layout() {
 
       try {
         const sessionState = await daemonClient.getSessionState(sessionId)
-        const model = sessionState.session?.model || 'AI Agent'
+        const sessionTitle = sessionState.session?.title || sessionState.session?.summary
 
         await notificationService.notifyApprovalRequired(
           sessionId,
           approvalId,
-          `${displayToolName} approval required`,
-          model,
+          displayToolName,
+          sessionTitle,
+          // toolArgs not easily available here, so we'll omit it
         )
         addNotifiedItem(notificationId)
       } catch (error) {
@@ -225,8 +226,8 @@ export function Layout() {
         await notificationService.notifyApprovalRequired(
           sessionId,
           approvalId,
-          `${displayToolName} approval required`,
-          'AI Agent',
+          displayToolName,
+          // No session title available in error case
         )
         addNotifiedItem(notificationId)
       }
@@ -574,7 +575,7 @@ export function Layout() {
       <HotkeyPanel open={isHotkeyPanelOpen} onOpenChange={setHotkeyPanelOpen} />
 
       {/* Notifications */}
-      <Toaster position="bottom-right" richColors />
+      <Toaster position="top-right" richColors />
 
       {/* Debug Panel */}
       <DebugPanel open={isDebugPanelOpen} onOpenChange={setIsDebugPanelOpen} />
