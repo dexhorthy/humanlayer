@@ -31,6 +31,9 @@
   gap: 12px !important;
   min-height: auto !important;
   max-width: 400px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
 }
 
 [data-sonner-toaster] [data-sonner-toast][data-type="success"] {
@@ -71,10 +74,11 @@
   font-family: inherit !important;
   font-size: 14px !important;
   font-weight: 400 !important;
-  line-height: 1.4 !important;
-  margin: 4px 0 0 0 !important;
+  line-height: 1.3 !important;
+  margin: 2px 0 0 0 !important;
   color: var(--terminal-fg-dim) !important;
   opacity: 1 !important;
+  white-space: pre-line !important;
 }
 
 /* Close button styling - minimal X in corner */
@@ -129,13 +133,14 @@
   text-transform: uppercase !important;
   letter-spacing: 0.05em !important;
   padding: 6px 12px !important;
-  margin: 12px 0 0 0 !important;
+  margin: 8px 0 0 0 !important;
   align-self: flex-start !important;
   min-height: auto !important;
   height: auto !important;
   width: auto !important;
   transition: all 150ms ease !important;
   cursor: pointer !important;
+  display: block !important;
 }
 
 [data-sonner-toaster] [data-button]:hover {
@@ -153,12 +158,20 @@
   display: none !important;
 }
 
+/* Force content wrapper to be in column layout, but not the close button */
+[data-sonner-toaster] [data-sonner-toast] > *:not([data-close-button]) {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+}
+
 [data-sonner-toaster] [data-content] {
   display: flex !important;
   flex-direction: column !important;
   gap: 0 !important;
   flex: 1 !important;
-  justify-content: space-between !important;
+  justify-content: flex-start !important;
+  width: 100% !important;
 }
 
 /* Text content grouping - ensure proper spacing */

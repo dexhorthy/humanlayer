@@ -91,7 +91,7 @@ export default function ToastDemo() {
 
   const showApprovalToasts = () => {
     toast('NEEDS_APPROVAL', {
-      description: `${truncate('Implement user authentication', 20)}\nwrite_file(src/components/Layout.tsx)`,
+      description: `${truncate('Implement user authentication', 30)}\nWrite(...components/Auth/LoginForm.tsx)`,
       duration: Infinity,
       action: {
         label: 'Jump to Session',
@@ -103,10 +103,36 @@ export default function ToastDemo() {
 
     setTimeout(() => {
       toast('NEEDS_APPROVAL', {
-        description: `${truncate('Install dependencies for project', 20)}\nrun_shell(npm install...)`,
+        description: `${truncate('Install dependencies for project', 30)}\nBash(npm install @tanstack/react-query)`,
         duration: Infinity,
         action: {
           label: 'Jump to Session', 
+          onClick: () => {
+            toast.success('Navigated to session')
+          },
+        },
+      })
+    }, 400)
+  }
+
+  const showReadyForInputToasts = () => {
+    toast('READY_FOR_INPUT', {
+      description: `${truncate('Implement user authentication', 30)}\nAwaiting next message`,
+      duration: Infinity,
+      action: {
+        label: 'Jump to Session',
+        onClick: () => {
+          toast.success('Navigated to session')
+        },
+      },
+    })
+
+    setTimeout(() => {
+      toast('READY_FOR_INPUT', {
+        description: `${truncate('Fix database connection issues', 30)}\nAwaiting next message`,
+        duration: Infinity,
+        action: {
+          label: 'Jump to Session',
           onClick: () => {
             toast.success('Navigated to session')
           },
@@ -301,34 +327,43 @@ export default function ToastDemo() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Approval Toasts</CardTitle>
-              <CardDescription>Interactive approval notifications (persistent)</CardDescription>
+              <CardTitle>Approval & Ready for Input Toasts</CardTitle>
+              <CardDescription>Interactive notifications for approvals and ready states (persistent)</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <Button onClick={() => toast('NEEDS_APPROVAL', {
-                  description: `${truncate('Fix layout component styling', 20)}\nwrite_file(src/components...)`,
+                  description: `${truncate('Fix layout component styling', 30)}\nEdit(...components/Layout/Header.tsx)`,
                   duration: Infinity,
                   action: { label: 'Jump to Session', onClick: () => toast.success('Navigated to session') }
                 })}>
                   File Write Approval
                 </Button>
                 <Button onClick={() => toast('NEEDS_APPROVAL', {
-                  description: `${truncate('Add React Query to project', 20)}\nrun_shell(npm install...)`,
+                  description: `${truncate('Add React Query to project', 30)}\nBash(npm install react-query axios)`,
                   duration: Infinity,
                   action: { label: 'Jump to Session', onClick: () => toast.success('Navigated to session') }
                 })}>
                   Shell Command Approval
                 </Button>
-                <Button onClick={() => toast('NEEDS_APPROVAL', {
-                  description: `${truncate('Generate code with AI model', 20)}\napi_call(openai...)`,
+                <Button onClick={() => toast('READY_FOR_INPUT', {
+                  description: `${truncate('Refactor authentication module', 30)}\nAwaiting next message`,
                   duration: Infinity,
                   action: { label: 'Jump to Session', onClick: () => toast.success('Navigated to session') }
                 })}>
-                  API Call Approval
+                  Ready for Input
                 </Button>
                 <Button onClick={showApprovalToasts}>
                   Multiple Approvals
+                </Button>
+                <Button onClick={showReadyForInputToasts}>
+                  Multiple Ready States
+                </Button>
+                <Button onClick={() => {
+                  showApprovalToasts()
+                  setTimeout(showReadyForInputToasts, 800)
+                }}>
+                  Mixed Status Toasts
                 </Button>
               </div>
             </CardContent>

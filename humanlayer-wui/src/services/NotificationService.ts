@@ -337,9 +337,13 @@ class NotificationService {
   ) {
     // Use new concise format for approval notifications
     const title = 'NEEDS_APPROVAL'
-    const sessionText = sessionTitle ? this.truncateText(sessionTitle, 20) : `Session ${sessionId.slice(0, 8)}`
-    const argsText = toolArgs ? this.truncateText(toolArgs, 30) : ''
-    const toolCall = argsText ? `${toolName}(${argsText})` : `${toolName}(...)`
+    const sessionText = sessionTitle ? this.truncateText(sessionTitle, 30) : `Session ${sessionId.slice(0, 8)}`
+    
+    // Calculate max arg length based on tool name length
+    // Aiming for total line length of ~40 chars
+    const maxArgLength = Math.max(10, 35 - toolName.length)
+    const argsText = toolArgs ? this.truncateTextRight(toolArgs, maxArgLength) : ''
+    const toolCall = `${toolName}(${argsText})`
     const body = `${sessionText}\n${toolCall}`
 
     return this.notify({
@@ -364,10 +368,62 @@ class NotificationService {
   }
 
   /**
+   * Convenience method for ready for input notifications
+   */
+  async notifyReadyForInput(
+    sessionId: string,
+    sessionTitle?: string
+  ) {
+    // Use same format as approval notifications for consistency
+    const title = 'READY_FOR_INPUT'
+    const sessionText = sessionTitle ? this.truncateText(sessionTitle, 30) : `Session ${sessionId.slice(0, 8)}`
+    const body = `${sessionText}\nAwaiting next message`
+
+    return this.notify({
+      type: 'approval_required', // Use same type for consistent styling
+      title,
+      body,
+      metadata: {
+        sessionId,
+      },
+      duration: Infinity, // Should stick until dismissed
+      actions: [
+        {
+          label: 'Jump to Session',
+          onClick: () => {
+            window.location.hash = `/sessions/${sessionId}`
+          },
+        },
+      ],
+    })
+  }
+
+  /**
    * Truncate text to specified length with ellipsis
    */
   private truncateText(text: string, maxLength: number): string {
     return text.length > maxLength ? text.slice(0, maxLength) + '...' : text
+  }
+
+  /**
+   * Truncate text from the left to show the end (useful for file paths)
+   */
+  private truncateTextRight(text: string, maxLength: number): string {
+    if (text.length <= maxLength) return text
+    // For file paths, try to preserve the filename
+    const lastSlash = text.lastIndexOf('/')
+    if (lastSlash !== -1) {
+      const filename = text.slice(lastSlash + 1)
+      if (filename.length <= maxLength) {
+        // If filename fits, show partial path + filename
+        const remainingSpace = maxLength - filename.length - 3 // -3 for "..."
+        if (remainingSpace > 0) {
+          return '...' + text.slice(-(maxLength))
+        }
+      }
+    }
+    // Otherwise just show the end
+    return '...' + text.slice(-(maxLength - 3))
   }
 
 
