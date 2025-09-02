@@ -399,10 +399,11 @@ class NotificationService {
   }
 
   /**
-   * Truncate text to specified length with ellipsis
+   * Truncate text from the left to show the end
    */
   private truncateText(text: string, maxLength: number): string {
-    return text.length > maxLength ? text.slice(0, maxLength) + '...' : text
+    if (text.length <= maxLength) return text
+    return '...' + text.slice(-(maxLength - 3))
   }
 
   /**
