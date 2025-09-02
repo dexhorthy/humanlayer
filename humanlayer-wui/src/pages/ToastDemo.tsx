@@ -46,7 +46,7 @@ const PRESET_NOTIFICATIONS = {
     }
   },
   multiEdit: {
-    sessionTitle: 'Refactor authentication module', 
+    sessionTitle: 'Refactor authentication module',
     toolName: 'MultiEdit',
     toolArgs: {
       file_path: 'src/auth/login.ts',
@@ -101,7 +101,7 @@ export default function ToastDemo() {
   const fireNotification = () => {
     try {
       const data: ApprovalNotification = JSON.parse(jsonInput)
-      
+
       // Extract the most relevant arg to display from toolArgs object
       let displayArg = ''
       if (typeof data.toolArgs === 'object' && data.toolArgs !== null) {
@@ -129,12 +129,12 @@ export default function ToastDemo() {
         // Handle legacy string format
         displayArg = data.toolArgs
       }
-      
+
       // Calculate max arg length based on tool name length
       const maxArgLength = Math.max(10, 35 - data.toolName.length)
       const truncatedArgs = truncateRight(String(displayArg), maxArgLength)
       const truncatedTitle = truncate(data.sessionTitle, 30)
-      
+
       toast(
         <span style={{ color: 'var(--terminal-warning)', fontWeight: 'bold' }}>NEEDS_APPROVAL</span>,
         {
@@ -190,7 +190,7 @@ export default function ToastDemo() {
                   placeholder="Enter notification JSON..."
                 />
               </div>
-              
+
               <div className="flex gap-2">
                 <Button onClick={fireNotification} className="flex-1">
                   Fire Notification
@@ -209,37 +209,37 @@ export default function ToastDemo() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => setPreset(PRESET_NOTIFICATIONS.writeFile)}
                 >
                   Write File
                 </Button>
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => setPreset(PRESET_NOTIFICATIONS.editFile)}
                 >
                   Edit File
                 </Button>
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => setPreset(PRESET_NOTIFICATIONS.bashCommand)}
                 >
                   Bash Command
                 </Button>
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => setPreset(PRESET_NOTIFICATIONS.multiEdit)}
                 >
                   Multi Edit
                 </Button>
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => setPreset(PRESET_NOTIFICATIONS.grep)}
                 >
                   Grep Search
                 </Button>
-                <Button 
+                <Button
                   variant="outline"
                   onClick={() => setPreset(PRESET_NOTIFICATIONS.read)}
                 >
@@ -250,7 +250,7 @@ export default function ToastDemo() {
           </Card>
         </div>
       </div>
-      
+
       {/* Toaster component for displaying toasts */}
       <Toaster position="top-right" richColors />
     </div>

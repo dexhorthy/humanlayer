@@ -329,8 +329,8 @@ class NotificationService {
    * Convenience method for approval required notifications
    */
   async notifyApprovalRequired(
-    sessionId: string, 
-    approvalId: string, 
+    sessionId: string,
+    approvalId: string,
     toolName: string,
     sessionTitle?: string,
     toolArgs?: string
@@ -338,7 +338,7 @@ class NotificationService {
     // Use new concise format for approval notifications
     const title = 'NEEDS_APPROVAL'
     const sessionText = sessionTitle ? this.truncateText(sessionTitle, 30) : `Session ${sessionId.slice(0, 8)}`
-    
+
     // Calculate max arg length based on tool name length
     // Aiming for total line length of ~40 chars
     const maxArgLength = Math.max(10, 35 - toolName.length)
