@@ -18,7 +18,8 @@
 }
 
 [data-sonner-toaster] [data-sonner-toast] {
-  background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--normal-bg) !important;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--normal-bg) !important;
   border: 1px solid var(--normal-border) !important;
   border-radius: 0 !important;
   color: var(--normal-text) !important;
@@ -26,7 +27,9 @@
   font-size: 12px !important;
   font-weight: 400 !important;
   line-height: 1.3 !important;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08) !important;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.12),
+    0 2px 4px rgba(0, 0, 0, 0.08) !important;
   padding: 10px 14px !important;
   gap: 8px !important;
   min-height: auto !important;
@@ -36,26 +39,30 @@
   align-items: stretch !important;
 }
 
-[data-sonner-toaster] [data-sonner-toast][data-type="success"] {
-  background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--success-bg) !important;
+[data-sonner-toaster] [data-sonner-toast][data-type='success'] {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--success-bg) !important;
   border-color: var(--success-border) !important;
   color: var(--success-text) !important;
 }
 
-[data-sonner-toaster] [data-sonner-toast][data-type="error"] {
-  background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--error-bg) !important;
+[data-sonner-toaster] [data-sonner-toast][data-type='error'] {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--error-bg) !important;
   border-color: var(--error-border) !important;
   color: var(--error-text) !important;
 }
 
-[data-sonner-toaster] [data-sonner-toast][data-type="info"] {
-  background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--info-bg) !important;
+[data-sonner-toaster] [data-sonner-toast][data-type='info'] {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--info-bg) !important;
   border-color: var(--info-border) !important;
   color: var(--info-text) !important;
 }
 
-[data-sonner-toaster] [data-sonner-toast][data-type="warning"] {
-  background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--warning-bg) !important;
+[data-sonner-toaster] [data-sonner-toast][data-type='warning'] {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--warning-bg) !important;
   border-color: var(--warning-border) !important;
   color: var(--warning-text) !important;
 }
@@ -71,7 +78,6 @@
   text-transform: uppercase !important;
   letter-spacing: 0.05em !important;
 }
-
 
 [data-sonner-toaster] [data-description] {
   font-family: inherit !important;
@@ -108,7 +114,7 @@
 
 /* Add X content to close button */
 [data-sonner-toaster] [data-close-button]:empty:after {
-  content: "×" !important;
+  content: '×' !important;
   font-size: 12px !important;
   line-height: 1 !important;
   font-weight: bold !important;
@@ -187,18 +193,19 @@
 }
 
 /* Loading/spinner styling - use simple text indicator */
-[data-sonner-toaster] [data-sonner-toast][data-type="loading"] {
-  background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--terminal-bg) !important;
+[data-sonner-toaster] [data-sonner-toast][data-type='loading'] {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--terminal-bg) !important;
   border-color: var(--terminal-border) !important;
   color: var(--terminal-fg) !important;
 }
 
 /* Animation tweaks - keep minimal */
-[data-sonner-toaster] [data-sonner-toast][data-mounted="true"] {
+[data-sonner-toaster] [data-sonner-toast][data-mounted='true'] {
   animation: slideIn 200ms cubic-bezier(0.21, 1.02, 0.73, 1) forwards !important;
 }
 
-[data-sonner-toaster] [data-sonner-toast][data-removed="true"] {
+[data-sonner-toaster] [data-sonner-toast][data-removed='true'] {
   animation: slideOut 200ms cubic-bezier(0.06, 0.71, 0.55, 1) forwards !important;
 }
 
@@ -230,7 +237,7 @@
 }
 
 /* Top-right positioning adjustments */
-[data-sonner-toaster][data-position="top-right"] {
+[data-sonner-toaster][data-position='top-right'] {
   top: 16px !important;
   right: 16px !important;
 }
@@ -246,7 +253,9 @@
 [data-theme='gruvbox-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(1),
 [data-theme='rose-pine-dawn'] [data-sonner-toaster] [data-sonner-toast]:nth-child(1),
 [data-theme='launch'] [data-sonner-toaster] [data-sonner-toast]:nth-child(1) {
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08), 0 3px 6px rgba(0, 0, 0, 0.05) !important;
+  box-shadow:
+    0 6px 12px rgba(0, 0, 0, 0.08),
+    0 3px 6px rgba(0, 0, 0, 0.05) !important;
 }
 
 [data-theme='solarized-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(2),
@@ -254,7 +263,9 @@
 [data-theme='gruvbox-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(2),
 [data-theme='rose-pine-dawn'] [data-sonner-toaster] [data-sonner-toast]:nth-child(2),
 [data-theme='launch'] [data-sonner-toaster] [data-sonner-toast]:nth-child(2) {
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04) !important;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.06),
+    0 2px 4px rgba(0, 0, 0, 0.04) !important;
 }
 
 [data-theme='solarized-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(3),
@@ -262,15 +273,19 @@
 [data-theme='gruvbox-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(3),
 [data-theme='rose-pine-dawn'] [data-sonner-toaster] [data-sonner-toast]:nth-child(3),
 [data-theme='launch'] [data-sonner-toaster] [data-sonner-toast]:nth-child(3) {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.03) !important;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.04),
+    0 1px 3px rgba(0, 0, 0, 0.03) !important;
 }
 
-[data-theme='solarized-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n+4),
-[data-theme='framer-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n+4),
-[data-theme='gruvbox-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n+4),
-[data-theme='rose-pine-dawn'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n+4),
-[data-theme='launch'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n+4) {
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03), 0 1px 2px rgba(0, 0, 0, 0.02) !important;
+[data-theme='solarized-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n + 4),
+[data-theme='framer-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n + 4),
+[data-theme='gruvbox-light'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n + 4),
+[data-theme='rose-pine-dawn'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n + 4),
+[data-theme='launch'] [data-sonner-toaster] [data-sonner-toast]:nth-child(n + 4) {
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.03),
+    0 1px 2px rgba(0, 0, 0, 0.02) !important;
 }
 
 /* Enhanced toast stacking with depth and shadows */
@@ -281,24 +296,32 @@
 /* Progressive shadow depth for stacked toasts */
 [data-sonner-toaster] [data-sonner-toast]:nth-child(1) {
   z-index: 100 !important;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15), 0 3px 6px rgba(0, 0, 0, 0.10) !important;
+  box-shadow:
+    0 6px 12px rgba(0, 0, 0, 0.15),
+    0 3px 6px rgba(0, 0, 0, 0.1) !important;
 }
 
 [data-sonner-toaster] [data-sonner-toast]:nth-child(2) {
   z-index: 99 !important;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08) !important;
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.12),
+    0 2px 4px rgba(0, 0, 0, 0.08) !important;
   transform: translateX(2px) !important;
 }
 
 [data-sonner-toaster] [data-sonner-toast]:nth-child(3) {
   z-index: 98 !important;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.06) !important;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.1),
+    0 1px 3px rgba(0, 0, 0, 0.06) !important;
   transform: translateX(4px) !important;
 }
 
-[data-sonner-toaster] [data-sonner-toast]:nth-child(n+4) {
+[data-sonner-toaster] [data-sonner-toast]:nth-child(n + 4) {
   z-index: 97 !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.04) !important;
   transform: translateX(6px) !important;
   opacity: 0.95 !important;
 }

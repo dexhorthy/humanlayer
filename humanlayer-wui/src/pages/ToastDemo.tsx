@@ -15,8 +15,8 @@ const DEFAULT_NOTIFICATION: ApprovalNotification = {
   toolName: 'Write',
   toolArgs: {
     filename: 'src/components/Auth/LoginForm.tsx',
-    contents: 'foo bar baz'
-  }
+    contents: 'foo bar baz',
+  },
 }
 
 const PRESET_NOTIFICATIONS = {
@@ -25,8 +25,8 @@ const PRESET_NOTIFICATIONS = {
     toolName: 'Write',
     toolArgs: {
       filename: 'src/components/Layout/Header.tsx',
-      contents: 'const Header = () => { return <header>...</header> }'
-    }
+      contents: 'const Header = () => { return <header>...</header> }',
+    },
   },
   editFile: {
     sessionTitle: 'Update API endpoints',
@@ -34,16 +34,16 @@ const PRESET_NOTIFICATIONS = {
     toolArgs: {
       file_path: 'src/services/api/endpoints.ts',
       old_string: 'http://localhost:3000',
-      new_string: 'https://api.production.com'
-    }
+      new_string: 'https://api.production.com',
+    },
   },
   bashCommand: {
     sessionTitle: 'Install dependencies',
     toolName: 'Bash',
     toolArgs: {
       command: 'npm install @tanstack/react-query axios',
-      description: 'Install React Query and Axios'
-    }
+      description: 'Install React Query and Axios',
+    },
   },
   multiEdit: {
     sessionTitle: 'Refactor authentication module',
@@ -52,9 +52,9 @@ const PRESET_NOTIFICATIONS = {
       file_path: 'src/auth/login.ts',
       edits: [
         { old_string: 'localStorage', new_string: 'sessionStorage' },
-        { old_string: 'token', new_string: 'authToken' }
-      ]
-    }
+        { old_string: 'token', new_string: 'authToken' },
+      ],
+    },
   },
   grep: {
     sessionTitle: 'Search for TODO comments',
@@ -62,8 +62,8 @@ const PRESET_NOTIFICATIONS = {
     toolArgs: {
       pattern: 'TODO|FIXME|HACK',
       path: 'src/',
-      output_mode: 'files_with_matches'
-    }
+      output_mode: 'files_with_matches',
+    },
   },
   read: {
     sessionTitle: 'Analyze configuration',
@@ -71,9 +71,9 @@ const PRESET_NOTIFICATIONS = {
     toolArgs: {
       file_path: '/Users/project/config/settings.json',
       offset: 0,
-      limit: 100
-    }
-  }
+      limit: 100,
+    },
+  },
 }
 
 // Helper to truncate text from left (show the end)
@@ -89,7 +89,7 @@ const truncateRight = (text: string, maxLength: number) => {
   if (lastSlash !== -1) {
     const filename = text.slice(lastSlash + 1)
     if (filename.length <= maxLength) {
-      return '...' + text.slice(-(maxLength))
+      return '...' + text.slice(-maxLength)
     }
   }
   return '...' + text.slice(-(maxLength - 3))
@@ -146,11 +146,11 @@ export default function ToastDemo() {
               toast.success('Navigated to session')
             },
           },
-        }
+        },
       )
     } catch (error) {
       toast.error('Invalid JSON', {
-        description: error instanceof Error ? error.message : 'Failed to parse JSON input'
+        description: error instanceof Error ? error.message : 'Failed to parse JSON input',
       })
     }
   }
@@ -185,7 +185,7 @@ export default function ToastDemo() {
                 <label className="text-sm font-medium">Notification JSON</label>
                 <textarea
                   value={jsonInput}
-                  onChange={(e) => setJsonInput(e.target.value)}
+                  onChange={e => setJsonInput(e.target.value)}
                   className="w-full h-48 p-3 font-mono text-sm bg-secondary/30 border border-border rounded-none resize-none"
                   placeholder="Enter notification JSON..."
                 />
@@ -209,40 +209,22 @@ export default function ToastDemo() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <Button
-                  variant="outline"
-                  onClick={() => setPreset(PRESET_NOTIFICATIONS.writeFile)}
-                >
+                <Button variant="outline" onClick={() => setPreset(PRESET_NOTIFICATIONS.writeFile)}>
                   Write File
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setPreset(PRESET_NOTIFICATIONS.editFile)}
-                >
+                <Button variant="outline" onClick={() => setPreset(PRESET_NOTIFICATIONS.editFile)}>
                   Edit File
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setPreset(PRESET_NOTIFICATIONS.bashCommand)}
-                >
+                <Button variant="outline" onClick={() => setPreset(PRESET_NOTIFICATIONS.bashCommand)}>
                   Bash Command
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setPreset(PRESET_NOTIFICATIONS.multiEdit)}
-                >
+                <Button variant="outline" onClick={() => setPreset(PRESET_NOTIFICATIONS.multiEdit)}>
                   Multi Edit
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setPreset(PRESET_NOTIFICATIONS.grep)}
-                >
+                <Button variant="outline" onClick={() => setPreset(PRESET_NOTIFICATIONS.grep)}>
                   Grep Search
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setPreset(PRESET_NOTIFICATIONS.read)}
-                >
+                <Button variant="outline" onClick={() => setPreset(PRESET_NOTIFICATIONS.read)}>
                   Read File
                 </Button>
               </div>

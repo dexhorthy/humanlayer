@@ -333,11 +333,13 @@ class NotificationService {
     approvalId: string,
     toolName: string,
     sessionTitle?: string,
-    toolArgs?: string
+    toolArgs?: string,
   ) {
     // Use new concise format for approval notifications
     const title = 'NEEDS_APPROVAL'
-    const sessionText = sessionTitle ? this.truncateText(sessionTitle, 30) : `Session ${sessionId.slice(0, 8)}`
+    const sessionText = sessionTitle
+      ? this.truncateText(sessionTitle, 30)
+      : `Session ${sessionId.slice(0, 8)}`
 
     // Calculate max arg length based on tool name length
     // Aiming for total line length of ~40 chars
@@ -370,13 +372,12 @@ class NotificationService {
   /**
    * Convenience method for ready for input notifications
    */
-  async notifyReadyForInput(
-    sessionId: string,
-    sessionTitle?: string
-  ) {
+  async notifyReadyForInput(sessionId: string, sessionTitle?: string) {
     // Use same format as approval notifications for consistency
     const title = 'READY_FOR_INPUT'
-    const sessionText = sessionTitle ? this.truncateText(sessionTitle, 30) : `Session ${sessionId.slice(0, 8)}`
+    const sessionText = sessionTitle
+      ? this.truncateText(sessionTitle, 30)
+      : `Session ${sessionId.slice(0, 8)}`
     const body = `${sessionText}\nAwaiting next message`
 
     return this.notify({
@@ -419,14 +420,13 @@ class NotificationService {
         // If filename fits, show partial path + filename
         const remainingSpace = maxLength - filename.length - 3 // -3 for "..."
         if (remainingSpace > 0) {
-          return '...' + text.slice(-(maxLength))
+          return '...' + text.slice(-maxLength)
         }
       }
     }
     // Otherwise just show the end
     return '...' + text.slice(-(maxLength - 3))
   }
-
 
   /**
    * Get current focus state
