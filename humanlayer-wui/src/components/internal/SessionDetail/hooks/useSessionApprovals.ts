@@ -1,8 +1,15 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useHotkeys } from 'react-hotkeys-hook'
 import { ConversationEvent, ApprovalStatus } from '@/lib/daemon/types'
 import { daemonClient } from '@/lib/daemon/client'
 import { notificationService } from '@/services/NotificationService'
+import { SessionDetailHotkeysScope } from '../SessionDetail'
+import { useStore } from '@/AppStore'
+import { ResponseInputLocalStorageKey } from './useSessionActions'
+
+/*
+  Much of this state-based code should be ported to Zustand.
+*/
 
 interface UseSessionApprovalsProps {
   sessionId: string
@@ -24,6 +31,7 @@ export function useSessionApprovals({
   const [approvingApprovalId, setApprovingApprovalId] = useState<string | null>(null)
   const [confirmingApprovalId, setConfirmingApprovalId] = useState<string | null>(null)
   const [denyingApprovalId, setDenyingApprovalId] = useState<string | null>(null)
+  const responseEditor = useStore(state => state.responseEditor)
 
   // Helper to check if element is in view
   const isElementInView = useCallback((elementId: number) => {
@@ -51,22 +59,54 @@ export function useSessionApprovals({
     }
   }, [])
 
-  const handleDeny = useCallback(async (approvalId: string, reason: string) => {
-    try {
-      await daemonClient.denyFunctionCall(approvalId, reason)
-      setDenyingApprovalId(null)
-    } catch (error) {
-      notificationService.notifyError(error, 'Failed to deny')
-    }
-  }, [])
+  const handleDeny = useCallback(
+    async (approvalId: string, reason: string, sessionId: string) => {
+      try {
+        const res = await daemonClient.denyFunctionCall(approvalId, reason)
+        console.log('handleDeny()', res)
 
-  const handleStartDeny = useCallback((approvalId: string) => {
-    setDenyingApprovalId(approvalId)
-  }, [])
+        if (res.success) {
+          responseEditor?.commands.setContent('')
+          localStorage.removeItem(`${ResponseInputLocalStorageKey}.${sessionId}`)
+        } else {
+          console.log('WHAT', res)
+        }
+
+        setDenyingApprovalId(null)
+      } catch (error) {
+        notificationService.notifyError(error, 'Failed to deny')
+      }
+    },
+    [responseEditor],
+  )
+
+  const denyAgainstOldestApproval = useCallback(() => {
+    const oldestApproval = events.find(
+      e => e.approvalStatus === ApprovalStatus.Pending && e.approvalId && e.id !== undefined,
+    )
+    if (oldestApproval) {
+      setDenyingApprovalId(oldestApproval.approvalId!)
+      // focus the oldest approval
+      setFocusedEventId(oldestApproval.id)
+      setFocusSource?.('keyboard')
+    }
+  }, [events, setFocusedEventId, setFocusSource])
+
+  const handleStartDeny = useCallback(
+    (approvalId: string) => {
+      setDenyingApprovalId(approvalId)
+      responseEditor?.commands.focus()
+    },
+    [responseEditor],
+  )
 
   const handleCancelDeny = useCallback(() => {
     setDenyingApprovalId(null)
   }, [])
+
+  const isDenying = useMemo(() => {
+    return denyingApprovalId !== null
+  }, [denyingApprovalId])
 
   // A key to approve focused event that has pending approval
   useHotkeys(
@@ -104,6 +144,9 @@ export function useSessionApprovals({
         }
       }
     },
+    {
+      scopes: SessionDetailHotkeysScope,
+    },
     [
       events,
       focusedEventId,
@@ -119,15 +162,23 @@ export function useSessionApprovals({
   useHotkeys(
     'd',
     e => {
-      // Find any pending approval event
+      // Prevent the 'd' from being typed in any input that might get focused
+      e.preventDefault()
+
+      const currentFocusedEventId = events.find(e => e.id === focusedEventId)
+
+      // Deny against currently focused event
+      if (currentFocusedEventId?.approvalStatus === ApprovalStatus.Pending) {
+        handleStartDeny(currentFocusedEventId.approvalId!)
+        return
+      }
+
+      // Deny against first matching pending approval
       const pendingApprovalEvent = events.find(
         e => e.approvalStatus === ApprovalStatus.Pending && e.approvalId && e.id !== undefined,
       )
 
       if (!pendingApprovalEvent || pendingApprovalEvent.id === undefined) return
-
-      // Prevent the 'd' from being typed in any input that might get focused
-      e.preventDefault()
 
       // If no event is focused, or a different event is focused, focus this pending approval
       if (!focusedEventId || focusedEventId !== pendingApprovalEvent.id) {
@@ -135,11 +186,9 @@ export function useSessionApprovals({
         setFocusSource?.('keyboard')
         return
       }
-
-      // If the pending approval is already focused, show the deny form
-      if (focusedEventId === pendingApprovalEvent.id) {
-        handleStartDeny(pendingApprovalEvent.approvalId!)
-      }
+    },
+    {
+      scopes: SessionDetailHotkeysScope,
     },
     [events, focusedEventId, handleStartDeny, setFocusedEventId, setFocusSource],
   )
@@ -163,6 +212,7 @@ export function useSessionApprovals({
   }, [denyingApprovalId, events, isElementInView])
 
   return {
+    isDenying,
     approvingApprovalId,
     confirmingApprovalId,
     setConfirmingApprovalId,
@@ -172,5 +222,6 @@ export function useSessionApprovals({
     handleDeny,
     handleStartDeny,
     handleCancelDeny,
+    denyAgainstOldestApproval,
   }
 }

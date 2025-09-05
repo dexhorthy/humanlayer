@@ -28,6 +28,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
 
+  /debug-info:
+    get:
+      operationId: getDebugInfo
+      summary: Get debug information
+      description: Get debug information about the daemon including database stats and runtime configuration
+      tags:
+        - System
+      responses:
+        '200':
+          description: Debug information retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugInfoResponse'
+
   /sessions:
     post:
       operationId: createSession
@@ -300,6 +315,86 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /user-settings:
+    get:
+      operationId: getUserSettings
+      summary: Get user settings
+      description: Retrieve user preferences and settings
+      tags:
+        - Settings
+      responses:
+        '200':
+          description: User settings retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSettingsResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      operationId: updateUserSettings
+      summary: Update user settings
+      description: Update user preferences and settings
+      tags:
+        - Settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserSettingsRequest'
+      responses:
+        '200':
+          description: Settings updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSettingsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /anthropic_proxy/{session_id}/v1/messages:
+    post:
+      summary: Proxy Anthropic API requests for a session
+      operationId: proxyAnthropicRequest
+      x-manual: true
+      tags:
+        - proxy-manual
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Session ID for per-session routing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Proxied response from Anthropic
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream for streaming responses
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /approvals:
     post:
       operationId: createApproval
@@ -494,6 +589,49 @@ components:
           type: string
           example: "0.1.0"
 
+    # Debug Info Response
+    DebugInfoResponse:
+      type: object
+      required:
+        - path
+        - size
+        - table_count
+        - stats
+        - cli_command
+      properties:
+        path:
+          type: string
+          description: Path to the SQLite database file
+          example: "/home/user/.humanlayer/daemon.db"
+        size:
+          type: integer
+          format: int64
+          description: Size of the database file in bytes
+          example: 1048576
+        table_count:
+          type: integer
+          description: Number of tables in the database
+          example: 5
+        stats:
+          type: object
+          description: Database statistics
+          additionalProperties:
+            type: integer
+            format: int64
+          example:
+            sessions: 42
+            approvals: 15
+            events: 237
+        cli_command:
+          type: string
+          description: CLI command configured for MCP servers
+          example: "hlyr"
+        last_modified:
+          type: string
+          format: date-time
+          description: Last modification time of the database file
+          example: "2024-01-15T10:30:00Z"
+
     # Session Types
     Session:
       type: object
@@ -539,6 +677,10 @@ components:
           type: string
           description: Model used for this session
           example: sonnet
+        model_id:
+          type: string
+          description: Full model identifier
+          example: claude-opus-4-1-20250805
         working_dir:
           type: string
           description: Working directory for the session
@@ -565,11 +707,36 @@ components:
           nullable: true
           description: Total cost in USD
           example: 0.05
-        total_tokens:
+        input_tokens:
           type: integer
           nullable: true
-          description: Total tokens used
-          example: 1500
+          description: Number of input tokens
+          example: 1000
+        output_tokens:
+          type: integer
+          nullable: true
+          description: Number of output tokens
+          example: 500
+        cache_creation_input_tokens:
+          type: integer
+          nullable: true
+          description: Number of cache creation input tokens
+          example: 100
+        cache_read_input_tokens:
+          type: integer
+          nullable: true
+          description: Number of cache read input tokens
+          example: 50000
+        effective_context_tokens:
+          type: integer
+          nullable: true
+          description: Total tokens counting toward context window limit
+          example: 51100
+        context_limit:
+          type: integer
+          nullable: true
+          description: Context window limit for the model
+          example: 168000
         duration_ms:
           type: integer
           nullable: true
@@ -579,10 +746,31 @@ components:
           type: boolean
           description: Whether edit tools are auto-accepted
           default: false
+        dangerously_skip_permissions:
+          type: boolean
+          description: When true, all tool calls are automatically approved without user consent
+          default: false
+        dangerously_skip_permissions_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO timestamp when dangerously skip permissions mode expires (optional)
         archived:
           type: boolean
           description: Whether session is archived
           default: false
+        proxy_enabled:
+          type: boolean
+          description: Whether proxy is enabled for this session
+          default: false
+        proxy_base_url:
+          type: string
+          description: Base URL of the proxy server
+          example: https://openrouter.ai/api/v1
+        proxy_model_override:
+          type: string
+          description: Model to use with the proxy
+          example: openai/gpt-oss-120b
 
     SessionStatus:
       type: string
@@ -605,6 +793,10 @@ components:
           type: string
           description: Initial query for Claude
           example: "Help me write a Python script to process CSV files"
+        title:
+          type: string
+          description: Optional title for the session
+          example: "CSV Processing Script"
         model:
           type: string
           enum: [opus, sonnet]
@@ -644,10 +836,40 @@ components:
         custom_instructions:
           type: string
           description: Custom instructions for Claude
+        auto_accept_edits:
+          type: boolean
+          description: Enable auto-accept for edit tools
+          default: false
+        dangerously_skip_permissions:
+          type: boolean
+          description: Launch session with dangerously skip permissions enabled
+          default: false
+        dangerously_skip_permissions_timeout:
+          type: integer
+          format: int64
+          nullable: true
+          description: Optional default timeout in milliseconds for dangerously skip permissions
+          default: 900000  # 15 minutes default, but nullable
         verbose:
           type: boolean
           description: Enable verbose output
           default: false
+        # Proxy configuration for OpenRouter support
+        proxy_enabled:
+          type: boolean
+          description: Enable proxy routing for this session
+          default: false
+        proxy_base_url:
+          type: string
+          description: Base URL for proxy service
+          example: "https://openrouter.ai/api/v1"
+        proxy_model_override:
+          type: string
+          description: Model identifier for proxy routing
+          example: "openai/gpt-4"
+        proxy_api_key:
+          type: string
+          description: API key for proxy authentication
 
     CreateSessionResponse:
       type: object
@@ -693,6 +915,14 @@ components:
         auto_accept_edits:
           type: boolean
           description: Enable/disable auto-accept for edit tools
+        dangerously_skip_permissions:
+          type: boolean
+          description: Enable or disable dangerously skip permissions mode
+        dangerously_skip_permissions_timeout_ms:
+          type: integer
+          format: int64
+          nullable: true
+          description: Optional timeout in milliseconds for dangerously skip permissions mode
         archived:
           type: boolean
           description: Archive/unarchive the session
@@ -700,6 +930,32 @@ components:
           type: string
           description: Update session title
           example: "Updated Task Name"
+        # New fields for model configuration
+        model:
+          type: string
+          description: Model to use (opus, sonnet, or empty for default)
+          example: "sonnet"
+        model_id:
+          type: string
+          description: Full model identifier
+          example: "claude-3-5-sonnet-20241022"
+        # New fields for proxy configuration
+        proxy_enabled:
+          type: boolean
+          description: Enable proxy routing for this session
+          example: true
+        proxy_base_url:
+          type: string
+          description: Base URL for proxy service
+          example: "https://openrouter.ai/api/v1"
+        proxy_model_override:
+          type: string
+          description: Model identifier for proxy routing
+          example: "anthropic/claude-3.5-sonnet"
+        proxy_api_key:
+          type: string
+          description: API key for proxy authentication
+          example: "sk-or-..."
 
     ContinueSessionRequest:
       type: object
@@ -971,6 +1227,38 @@ components:
           items:
             $ref: '#/components/schemas/RecentPath'
 
+    UserSettings:
+      type: object
+      required:
+        - advanced_providers
+        - created_at
+        - updated_at
+      properties:
+        advanced_providers:
+          type: boolean
+          description: Enable advanced provider options like OpenRouter
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UserSettingsResponse:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          $ref: '#/components/schemas/UserSettings'
+
+    UpdateUserSettingsRequest:
+      type: object
+      properties:
+        advanced_providers:
+          type: boolean
+          description: Enable or disable advanced provider options
+
     # Approval Types
     Approval:
       type: object
@@ -1129,26 +1417,39 @@ components:
 
     MCPServer:
       type: object
-      required:
-        - command
       properties:
+        type:
+          type: string
+          description: Server type (http for HTTP servers, omit for stdio)
+          example: http
         command:
           type: string
-          description: Command to execute
+          description: Command to execute (for stdio servers)
           example: mcp-server-filesystem
         args:
           type: array
           items:
             type: string
-          description: Command arguments
+          description: Command arguments (for stdio servers)
           example: ["--read-only", "/home/user"]
         env:
           type: object
           additionalProperties:
             type: string
-          description: Environment variables
+          description: Environment variables (for stdio servers)
           example:
             DEBUG: "true"
+        url:
+          type: string
+          description: HTTP endpoint URL (for HTTP servers)
+          example: http://localhost:7777/api/v1/mcp
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: HTTP headers to include (for HTTP servers)
+          example:
+            X-Session-ID: "session-123"
 
     # Event Types
     EventType:
@@ -1158,6 +1459,7 @@ components:
         - approval_resolved
         - session_status_changed
         - conversation_updated
+        - session_settings_changed
       description: Type of system event
 
     Event:
@@ -1251,3 +1553,5 @@ tags:
     description: Human-in-the-loop approval workflows
   - name: Events
     description: Real-time event streaming
+  - name: Proxy
+    description: Model proxy endpoints for alternative providers

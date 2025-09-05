@@ -22,7 +22,15 @@ export function formatTimestamp(date: Date | string): string {
   if (!isValid(d)) return 'Invalid date'
 
   // Use date-fns for relative time formatting
-  const distance = formatDistanceToNow(d, { addSuffix: true })
+  let distance = formatDistanceToNow(d, { addSuffix: true })
+
+  // Replace "less than a minute ago" with "<1 minute ago"
+  if (distance === 'less than a minute ago') {
+    distance = '<1 minute ago'
+  }
+
+  // Replace "about X hours ago" with "~X hours ago"
+  distance = distance.replace(/^about (\d+ hours? ago)/, '~$1')
 
   // For dates older than 7 days, show actual date
   const daysDiff = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24))
@@ -113,4 +121,42 @@ export function truncatePath(path: string | undefined, maxLength: number = 40): 
   // Fallback: simple end truncation ensuring at least 30 chars visible
   const minEndChars = Math.min(30, maxLength - 3)
   return '...' + homePath.slice(-minEndChars)
+}
+
+/**
+ * Parse MCP tool name format: mcp__service__method
+ * @param toolName - Raw MCP tool name (e.g., 'mcp__linear__create_comment')
+ * @returns Parsed service and method names
+ */
+export function parseMcpToolName(toolName: string): { service: string; method: string } {
+  const parts = toolName.split('__')
+  return {
+    service: parts[1] || 'unknown',
+    method: parts.slice(2).join('__') || 'unknown', // Handle methods with __ in name
+  }
+}
+
+/**
+ * Format MCP tool name for display
+ * @param toolName - Raw MCP tool name (e.g., 'mcp__linear__create_comment')
+ * @returns Formatted display name (e.g., 'linear - create comment')
+ */
+export function formatMcpToolName(toolName: string): string {
+  const { service, method } = parseMcpToolName(toolName)
+  return `${service} - ${method.replace(/_/g, ' ')}`
+}
+
+/**
+ * Get formatted session text for notifications
+ * Prioritizes human-readable title/summary over raw query and truncates to maxLength
+ * @param session - Session object with optional title, summary, and query fields
+ * @param maxLength - Maximum length of the returned text (default: 40)
+ * @returns Formatted session text truncated to maxLength
+ */
+export function getSessionNotificationText(
+  session: { title?: string; summary?: string; query: string },
+  maxLength: number = 40,
+): string {
+  const text = session.title || session.summary || session.query
+  return text.trim().slice(0, maxLength)
 }

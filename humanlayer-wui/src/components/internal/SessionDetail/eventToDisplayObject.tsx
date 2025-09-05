@@ -12,7 +12,6 @@ import {
   Bot,
   Brain,
   FilePenLine,
-  UserCheck,
   User,
   Wrench,
   Globe,
@@ -20,12 +19,14 @@ import {
   Terminal,
   Search,
   ListTodo,
+  ListChecks,
 } from 'lucide-react'
 import { CommandToken } from '@/components/internal/CommandToken'
 import { formatToolResult } from './formatToolResult'
 import { DiffViewToggle } from './components/DiffViewToggle'
-import { DenyForm } from './components/DenyForm'
+import { DenyButtons } from './components/DenyButtons'
 import { CustomDiffViewer } from './components/CustomDiffViewer'
+import { parseMcpToolName } from '@/utils/formatting'
 
 // TODO(2): Break this monster function into smaller, focused display components
 // TODO(2): Extract tool-specific rendering logic
@@ -56,13 +57,14 @@ export function eventToDisplayObject(
   toolResult?: ConversationEvent,
   isFocused?: boolean,
   getSnapshot?: (filePath: string) => FileSnapshotInfo | undefined,
+  responseText?: string,
 ) {
   let subject = null
   let body = null
   let iconComponent = null
   let toolResultContent = null
 
-  // console.log('event', event)
+  // logger.log('event', event)
   // Check if this is a thinking message
   const isThinking =
     event.eventType === ConversationEventType.Thinking ||
@@ -72,7 +74,7 @@ export function eventToDisplayObject(
 
   // Tool Calls
   if (event.eventType === ConversationEventType.ToolCall) {
-    iconComponent = <Wrench className={iconClasses} />
+    iconComponent = getToolIcon(event.toolName, iconClasses)
 
     // Claude Code converts "LS" to "List"
     if (event.toolName === 'LS') {
@@ -127,9 +129,10 @@ export function eventToDisplayObject(
 
     if (event.toolName === 'Task') {
       const toolInput = JSON.parse(event.toolInputJson!)
+      const displayName = toolInput.subagent_type || 'Task'
       subject = (
         <span>
-          <span className="font-bold">{event.toolName} </span>
+          <span className="font-bold">{displayName} </span>
           <span className="font-mono text-sm text-muted-foreground">{toolInput.description}</span>
         </span>
       )
@@ -185,7 +188,6 @@ export function eventToDisplayObject(
     }
 
     if (event.toolName === 'Write') {
-      iconComponent = <FilePenLine className={iconClasses} />
       const toolInput = JSON.parse(event.toolInputJson!)
       subject = (
         <span>
@@ -224,7 +226,6 @@ export function eventToDisplayObject(
     }
 
     if (event.toolName === 'WebSearch') {
-      iconComponent = <Globe className={iconClasses} />
       const toolInput = JSON.parse(event.toolInputJson!)
       subject = (
         <span>
@@ -234,19 +235,43 @@ export function eventToDisplayObject(
       )
     }
 
+    if (event.toolName === 'WebFetch') {
+      const toolInput = JSON.parse(event.toolInputJson!)
+      subject = (
+        <span>
+          <span className="font-bold">Web Fetch </span>
+          <span className="font-mono text-sm text-muted-foreground">{toolInput.url}</span>
+          {toolInput.prompt && (
+            <div className="mt-1 text-sm text-muted-foreground italic">"{toolInput.prompt}"</div>
+          )}
+        </span>
+      )
+    }
+
+    if (event.toolName === 'ExitPlanMode') {
+      const toolInput = JSON.parse(event.toolInputJson!)
+      const planLines = toolInput.plan.split('\n').filter((l: string) => l.trim())
+      const lineCount = planLines.length
+
+      subject = (
+        <span>
+          <span className="font-bold">Exit Plan Mode </span>
+          <span className="text-sm text-muted-foreground">({lineCount} lines)</span>
+        </span>
+      )
+    }
+
     // MCP tool handling
     if (event.toolName?.startsWith('mcp__')) {
-      // Parse the MCP tool name: mcp__service__method
-      const parts = event.toolName.split('__')
-      const service = parts[1] || 'unknown'
-      const method = parts.slice(2).join('__') || 'unknown' // Handle methods with __ in name
+      const { service, method } = parseMcpToolName(event.toolName)
+      const formattedMethod = method.replace(/_/g, ' ')
 
       const toolInput = event.toolInputJson ? JSON.parse(event.toolInputJson) : {}
 
       subject = (
         <span>
           <span className="font-bold">
-            {service} - {method}{' '}
+            {service} - {formattedMethod}{' '}
           </span>
           <span className="font-mono text-sm text-muted-foreground">
             {/* Show first parameter if it's simple (string/number) */}
@@ -282,7 +307,7 @@ export function eventToDisplayObject(
       [ApprovalStatus.Denied]: 'text-[var(--terminal-error)]',
       resolved: 'text-[var(--terminal-success)]', // Add resolved status
     }
-    iconComponent = <UserCheck className={iconClasses} />
+    // Keep the original tool icon instead of overriding with UserCheck
     let previewFile = null
 
     // Get border class based on approval status
@@ -453,6 +478,16 @@ export function eventToDisplayObject(
       )
     }
 
+    if (event.toolName === 'ExitPlanMode') {
+      const toolInput = JSON.parse(event.toolInputJson!)
+
+      previewFile = (
+        <div className="mt-2">
+          <MarkdownRenderer content={toolInput.plan} sanitize={false} />
+        </div>
+      )
+    }
+
     // If we have a formatted subject from tool-specific rendering, use it
     if (formattedToolSubject) {
       subject = (
@@ -525,7 +560,16 @@ export function eventToDisplayObject(
               )}
             </>
           ) : (
-            <DenyForm approvalId={event.approvalId!} onDeny={onDeny} onCancel={onCancelDeny} />
+            <DenyButtons
+              onCancel={onCancelDeny}
+              onDeny={() => {
+                if (event.approvalId && onDeny) {
+                  onDeny(event.approvalId, responseText?.trim() || '')
+                }
+              }}
+              isDenying={isDenying}
+              isDisabled={!responseText?.trim()}
+            />
           )}
         </div>
       )
@@ -575,6 +619,12 @@ export function eventToDisplayObject(
     iconComponent = <User className={iconClasses} />
   }
 
+  const InfoExpand = (
+    <span className={`text-xs text-muted-foreground/50 ml-2 ${isFocused ? 'visible' : 'invisible'}`}>
+      <kbd className="px-1 py-0.5 text-xs bg-muted/50 rounded">i</kbd> expand
+    </span>
+  )
+
   // Display tool result content for tool calls
   if (event.eventType === ConversationEventType.ToolCall) {
     if (toolResult) {
@@ -586,7 +636,8 @@ export function eventToDisplayObject(
             <div className="mt-1 text-sm font-mono flex items-start gap-1">
               <span className="text-muted-foreground/50">⎿</span>
               <span className="text-destructive">
-                Denied: {toolResult.toolResultContent || 'No reason provided'}
+                Denial Reason: {toolResult.toolResultContent || 'No reason provided'}
+                {InfoExpand}
               </span>
             </div>
           </>
@@ -603,22 +654,32 @@ export function eventToDisplayObject(
                 <span className="text-muted-foreground/50">⎿</span>
                 <span>
                   {resultDisplay}
-                  {isFocused && (
-                    <span className="text-xs text-muted-foreground/50 ml-2">
-                      <kbd className="px-1 py-0.5 text-xs bg-muted/50 rounded">i</kbd> expand
-                    </span>
-                  )}
+                  {InfoExpand}
                 </span>
               </div>
             </>
           )
         }
       }
+    } else if (
+      isFocused &&
+      event.toolName === 'WebFetch' &&
+      event.approvalStatus !== ApprovalStatus.Pending
+    ) {
+      // Show expand hint for WebFetch which has rich content even without results (but not when pending)
+      subject = (
+        <>
+          {subject}
+          <span className="text-xs text-muted-foreground/50 ml-2">
+            <kbd className="px-1 py-0.5 text-xs bg-muted/50 rounded">i</kbd> expand
+          </span>
+        </>
+      )
     }
   }
 
   if (subject === null) {
-    // console.warn('Unknown subject for event', event)
+    // logger.warn('Unknown subject for event', event)
     subject = <span>Unknown Subject</span>
   }
 
@@ -637,36 +698,40 @@ export function eventToDisplayObject(
 }
 
 // Export icon mapping function for reuse in modal
-export function getToolIcon(toolName: string | undefined): React.ReactNode {
-  if (!toolName) return <Wrench className="w-3.5 h-3.5" />
+export function getToolIcon(toolName: string | undefined, className = 'w-3.5 h-3.5'): React.ReactNode {
+  if (!toolName) return <Wrench className={className} />
 
   // Handle MCP tools
   if (toolName.startsWith('mcp__')) {
-    return <Globe className="w-3.5 h-3.5" />
+    return <Globe className={className} />
   }
 
   // Handle regular tools
   switch (toolName) {
     case 'Edit':
     case 'MultiEdit':
-      return <FilePenLine className="w-3.5 h-3.5" />
+      return <FilePenLine className={className} />
     case 'Read':
-      return <FileText className="w-3.5 h-3.5" />
+      return <FileText className={className} />
     case 'Write':
-      return <FilePenLine className="w-3.5 h-3.5" />
+      return <FilePenLine className={className} />
     case 'Bash':
-      return <Terminal className="w-3.5 h-3.5" />
+      return <Terminal className={className} />
     case 'Grep':
-      return <Search className="w-3.5 h-3.5" />
+      return <Search className={className} />
     case 'TodoWrite':
-      return <ListTodo className="w-3.5 h-3.5" />
+      return <ListTodo className={className} />
     case 'WebSearch':
-      return <Globe className="w-3.5 h-3.5" />
+      return <Globe className={className} />
+    case 'WebFetch':
+      return <Globe className={className} />
+    case 'ExitPlanMode':
+      return <ListChecks className={className} />
     case 'NotebookRead':
     case 'NotebookEdit':
-      return <FileText className="w-3.5 h-3.5" />
+      return <FileText className={className} />
     default:
-      return <Wrench className="w-3.5 h-3.5" />
+      return <Wrench className={className} />
   }
 }
 

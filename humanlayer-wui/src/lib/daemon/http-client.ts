@@ -2,11 +2,13 @@ import {
   CreateSessionResponseData,
   HLDClient,
   RecentPath as SDKRecentPath,
-  Session,
   Approval,
   ConversationEvent,
+  UserSettingsResponse,
+  UpdateUserSettingsRequest,
 } from '@humanlayer/hld-sdk'
 import { getDaemonUrl, getDefaultHeaders } from './http-config'
+import { logger } from '@/lib/logging'
 import type {
   DaemonClient as IDaemonClient,
   LaunchSessionParams,
@@ -16,7 +18,10 @@ import type {
   SubscriptionHandle,
   SessionSnapshot,
   HealthCheckResponse,
+  Session,
+  ConfigStatus,
 } from './types'
+import { transformSDKSession } from './types'
 
 export class HTTPDaemonClient implements IDaemonClient {
   private client?: HLDClient
@@ -61,7 +66,8 @@ export class HTTPDaemonClient implements IDaemonClient {
   }
 
   private async doConnect(): Promise<void> {
-    const baseUrl = getDaemonUrl()
+    // getDaemonUrl now checks for managed daemon port dynamically
+    const baseUrl = await getDaemonUrl()
 
     this.client = new HLDClient({
       baseUrl: `${baseUrl}/api/v1`,
@@ -82,6 +88,16 @@ export class HTTPDaemonClient implements IDaemonClient {
     }
   }
 
+  async reconnect(): Promise<void> {
+    // Disconnect first if connected
+    if (this.connected || this.connectionPromise) {
+      await this.disconnect()
+    }
+
+    // Now connect to the potentially new URL
+    return this.connect()
+  }
+
   async disconnect(): Promise<void> {
     // Unsubscribe all event streams
     for (const unsubscribe of this.subscriptions.values()) {
@@ -91,6 +107,8 @@ export class HTTPDaemonClient implements IDaemonClient {
 
     this.connected = false
     this.client = undefined
+    this.connectionPromise = undefined
+    this.retryCount = 0
   }
 
   async health(): Promise<HealthCheckResponse> {
@@ -109,31 +127,75 @@ export class HTTPDaemonClient implements IDaemonClient {
   ): Promise<CreateSessionResponseData> {
     await this.ensureConnected()
 
-    // Map model names to SDK enum values
-    let model: 'opus' | 'sonnet' | undefined = undefined
-    if (params.model) {
+    // Handle provider-specific model formatting
+    let model: string | undefined = params.model
+    const provider = 'provider' in params ? params.provider : 'anthropic'
+
+    // Only map to enum for Anthropic provider
+    if (provider === 'anthropic' && params.model) {
       if (params.model.includes('sonnet')) {
         model = 'sonnet'
       } else if (params.model.includes('opus')) {
         model = 'opus'
       }
     }
+    // For OpenRouter and Baseten, pass model string as-is via proxyModelOverride
 
+    const additionalDirs = 'additionalDirectories' in params ? params.additionalDirectories : undefined
+
+    // Create the session with appropriate settings
     const response = await this.client!.createSession({
       query: params.query,
+      title: 'title' in params ? params.title : undefined,
       workingDir:
         'workingDir' in params ? params.workingDir : (params as LaunchSessionRequest).working_dir,
-      model: model,
+      model:
+        provider === 'openrouter' || provider === 'baseten'
+          ? undefined
+          : (model as 'opus' | 'sonnet' | undefined),
       mcpConfig: 'mcpConfig' in params ? params.mcpConfig : (params as LaunchSessionRequest).mcp_config,
       permissionPromptTool:
         'permissionPromptTool' in params
           ? params.permissionPromptTool
           : (params as LaunchSessionRequest).permission_prompt_tool,
       autoAcceptEdits: 'autoAcceptEdits' in params ? params.autoAcceptEdits : undefined,
+      dangerouslySkipPermissions:
+        'dangerouslySkipPermissions' in params
+          ? params.dangerouslySkipPermissions
+          : (params as LaunchSessionRequest).dangerously_skip_permissions,
+      // Map array fields with snake_case conversion
+      allowedTools:
+        'allowedTools' in params ? params.allowedTools : (params as LaunchSessionRequest).allowed_tools,
+      disallowedTools:
+        'disallowedTools' in params
+          ? params.disallowedTools
+          : (params as LaunchSessionRequest).disallowed_tools,
+      additionalDirectories: additionalDirs,
+      // Pass proxy configuration directly if using OpenRouter
+      ...(provider === 'openrouter' && {
+        proxyEnabled: true,
+        proxyBaseUrl: 'https://openrouter.ai/api/v1',
+        proxyModelOverride: model,
+        proxyApiKey:
+          'proxyApiKey' in params ? params.proxyApiKey : (params as LaunchSessionRequest).proxy_api_key,
+      }),
+      // Pass proxy configuration directly if using Baseten
+      ...(provider === 'baseten' && {
+        proxyEnabled: 'proxy_enabled' in params ? params.proxy_enabled : true,
+        proxyBaseUrl:
+          'proxy_base_url' in params ? params.proxy_base_url : 'https://inference.baseten.co/v1',
+        proxyModelOverride:
+          'proxy_model_override' in params
+            ? String(params.proxy_model_override).replace(/['"]/g, '')
+            : String(model || 'deepseek-ai/DeepSeek-V3.1').replace(/['"]/g, ''),
+        proxyApiKey:
+          'proxyApiKey' in params ? params.proxyApiKey : (params as LaunchSessionRequest).proxy_api_key,
+      }),
       // Additional fields that might be in legacy format
       ...((params as any).template && { template: (params as any).template }),
       ...((params as any).instructions && { instructions: (params as any).instructions }),
-    })
+    } as any)
+
     return response
     // return this.transformSession(response)
   }
@@ -141,7 +203,7 @@ export class HTTPDaemonClient implements IDaemonClient {
   async listSessions(): Promise<Session[]> {
     await this.ensureConnected()
     const response = await this.client!.listSessions({ leafOnly: true })
-    return response
+    return response.map(transformSDKSession)
   }
 
   async getSessionLeaves(request?: {
@@ -152,10 +214,21 @@ export class HTTPDaemonClient implements IDaemonClient {
     // The SDK's listSessions with leafOnly=true is equivalent
     const response = await this.client!.listSessions({
       leafOnly: true,
-      includeArchived: request?.include_archived || request?.archived_only,
+      includeArchived: request?.include_archived,
+      archivedOnly: request?.archived_only,
     })
+    logger.debug(
+      'getSessionLeaves raw response sample:',
+      response[0]
+        ? {
+            id: response[0].id,
+            dangerouslySkipPermissions: response[0].dangerouslySkipPermissions,
+            dangerouslySkipPermissionsExpiresAt: response[0].dangerouslySkipPermissionsExpiresAt,
+          }
+        : 'no sessions',
+    )
     return {
-      sessions: response,
+      sessions: response.map(transformSDKSession),
     }
   }
 
@@ -165,7 +238,7 @@ export class HTTPDaemonClient implements IDaemonClient {
 
     // Transform to expected SessionState format
     return {
-      session: session,
+      session: transformSDKSession(session),
       pendingApprovals: [], // Will be populated if needed
     }
   }
@@ -190,13 +263,35 @@ export class HTTPDaemonClient implements IDaemonClient {
 
   async updateSessionSettings(
     sessionId: string,
-    settings: { auto_accept_edits?: boolean },
+    settings: {
+      auto_accept_edits?: boolean
+      dangerously_skip_permissions?: boolean
+      dangerously_skip_permissions_timeout_ms?: number
+    },
   ): Promise<{ success: boolean }> {
     await this.ensureConnected()
-    await this.client!.updateSession(sessionId, {
-      auto_accept_edits: settings.auto_accept_edits,
-    })
-    return { success: true }
+
+    // The SDK client expects camelCase for some fields but the method signature uses snake_case
+    const payload: any = {}
+    if (settings.auto_accept_edits !== undefined) {
+      payload.auto_accept_edits = settings.auto_accept_edits
+    }
+    if (settings.dangerously_skip_permissions !== undefined) {
+      payload.dangerouslySkipPermissions = settings.dangerously_skip_permissions
+    }
+    if (settings.dangerously_skip_permissions_timeout_ms !== undefined) {
+      payload.dangerouslySkipPermissionsTimeoutMs = settings.dangerously_skip_permissions_timeout_ms
+    }
+
+    logger.log('Sending updateSession request', { sessionId, payload })
+
+    try {
+      await this.client!.updateSession(sessionId, payload)
+      return { success: true }
+    } catch (error) {
+      logger.error('updateSession failed', { error, sessionId, payload })
+      throw error
+    }
   }
 
   async archiveSession(
@@ -240,6 +335,61 @@ export class HTTPDaemonClient implements IDaemonClient {
       success: true,
       archived_count: result.archived.length,
     }
+  }
+
+  async updateSession(
+    sessionId: string,
+    updates: {
+      model?: string
+      title?: string
+      archived?: boolean
+      autoAcceptEdits?: boolean
+      dangerouslySkipPermissions?: boolean
+      dangerouslySkipPermissionsTimeoutMs?: number
+      // New proxy fields
+      proxyEnabled?: boolean
+      proxyBaseUrl?: string
+      proxyModelOverride?: string
+      proxyApiKey?: string
+    },
+  ): Promise<{ success: boolean }> {
+    await this.ensureConnected()
+
+    // Map to SDK client's expected format (snake_case for legacy fields, camelCase for new fields)
+    const sdkUpdates: any = {}
+    if (updates.model !== undefined) {
+      sdkUpdates.model = updates.model
+    }
+    if (updates.title !== undefined) {
+      sdkUpdates.title = updates.title
+    }
+    if (updates.archived !== undefined) {
+      sdkUpdates.archived = updates.archived
+    }
+    if (updates.autoAcceptEdits !== undefined) {
+      sdkUpdates.auto_accept_edits = updates.autoAcceptEdits
+    }
+    if (updates.dangerouslySkipPermissions !== undefined) {
+      sdkUpdates.dangerouslySkipPermissions = updates.dangerouslySkipPermissions
+    }
+    if (updates.dangerouslySkipPermissionsTimeoutMs !== undefined) {
+      sdkUpdates.dangerouslySkipPermissionsTimeoutMs = updates.dangerouslySkipPermissionsTimeoutMs
+    }
+    if (updates.proxyEnabled !== undefined) {
+      sdkUpdates.proxyEnabled = updates.proxyEnabled
+    }
+    if (updates.proxyBaseUrl !== undefined) {
+      sdkUpdates.proxyBaseUrl = updates.proxyBaseUrl
+    }
+    if (updates.proxyModelOverride !== undefined) {
+      sdkUpdates.proxyModelOverride = updates.proxyModelOverride
+    }
+    if (updates.proxyApiKey !== undefined) {
+      sdkUpdates.proxyApiKey = updates.proxyApiKey
+    }
+
+    await this.client!.updateSession(sessionId, sdkUpdates)
+    return { success: true }
   }
 
   // remove ignore once we've implemented this again
@@ -346,10 +496,10 @@ export class HTTPDaemonClient implements IDaemonClient {
               })
             },
             onError: error => {
-              console.error('Event subscription error:', error)
+              logger.error('Event subscription error:', error)
               // Attempt reconnection
               if (!this.connected) {
-                this.connect().catch(console.error)
+                this.connect().catch(logger.error)
               }
             },
             onDisconnect: () => {
@@ -362,7 +512,7 @@ export class HTTPDaemonClient implements IDaemonClient {
         this.subscriptions.set(subscriptionId, unsubscribe)
       })
       .catch(error => {
-        console.error('Failed to start event subscription:', error)
+        logger.error('Failed to start event subscription:', error)
       })
 
     // Return handle for unsubscribing
@@ -388,7 +538,53 @@ export class HTTPDaemonClient implements IDaemonClient {
     return response // SDK now properly returns RecentPath[]
   }
 
+  async getDebugInfo(): Promise<import('./types').DebugInfo> {
+    await this.ensureConnected()
+
+    // Use REST API endpoint
+    const baseUrl = await getDaemonUrl()
+    const response = await fetch(`${baseUrl}/api/v1/debug-info`, {
+      method: 'GET',
+      headers: getDefaultHeaders(),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to get debug info: ${response.statusText}`)
+    }
+
+    const data = await response.json()
+    return data
+  }
+
   // Private Helper Methods
+
+  async getConfigStatus(): Promise<ConfigStatus> {
+    await this.ensureConnected()
+    const baseUrl = await getDaemonUrl()
+    const response = await fetch(`${baseUrl}/api/v1/config/status`, {
+      headers: getDefaultHeaders(),
+    })
+    if (!response.ok) {
+      throw new Error('Failed to fetch config status')
+    }
+    return response.json()
+  }
+
+  async getUserSettings(): Promise<UserSettingsResponse> {
+    await this.ensureConnected()
+    if (!this.client) throw new Error('SDK client not initialized')
+
+    const response = await this.client.getUserSettings()
+    return response
+  }
+
+  async updateUserSettings(settings: UpdateUserSettingsRequest): Promise<UserSettingsResponse> {
+    await this.ensureConnected()
+    if (!this.client) throw new Error('SDK client not initialized')
+
+    const response = await this.client.updateUserSettings(settings)
+    return response
+  }
 
   private async ensureConnected(): Promise<void> {
     if (!this.connected) {

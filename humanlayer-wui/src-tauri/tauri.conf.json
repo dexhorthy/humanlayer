@@ -12,10 +12,13 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "CodeLayer",
         "width": 800,
         "height": 600,
-        "zoomHotkeysEnabled": true
+        "zoomHotkeysEnabled": true,
+        "titleBarStyle": "Transparent",
+        "hiddenTitle": false
       }
     ],
     "security": {
@@ -31,7 +34,8 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": ["bin/hld", "bin/humanlayer"]
   },
   "plugins": {
     "fs": {

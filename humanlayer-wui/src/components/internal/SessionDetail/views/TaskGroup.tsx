@@ -4,6 +4,8 @@ import { TaskEventGroup } from '../hooks/useTaskGrouping'
 import { truncate, formatAbsoluteTimestamp, formatTimestamp } from '@/utils/formatting'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { eventToDisplayObject } from '../eventToDisplayObject'
+import { hasTextSelection } from '@/utils/selection'
+import { useStore } from '@/AppStore'
 
 interface TaskGroupProps {
   group: TaskEventGroup
@@ -53,13 +55,20 @@ export function TaskGroup({
   shouldIgnoreMouseEvent,
 }: TaskGroupProps) {
   const { parentTask, toolCallCount, latestEvent, hasPendingApproval } = group
-  const description = JSON.parse(parentTask.toolInputJson || '{}').description || 'Task'
+  const taskInput = JSON.parse(parentTask.toolInputJson || '{}')
+  const displayName = taskInput.subagent_type || 'Task'
+  const description = taskInput.description || 'Task'
   const isCompleted = parentTask.isCompleted
+  const responseEditor = useStore(state => state.responseEditor)
 
   return (
     <div
-      className={`p-4 TaskGroup cursor-pointer transition-all duration-200 ${
-        focusedEventId === parentTask.id ? 'shadow-[inset_2px_0_0_0_var(--terminal-accent)]' : ''
+      className={`p-4 TaskGroup cursor-pointer transition-colors duration-200 border-l-2 ${
+        focusedEventId === parentTask.id
+          ? responseEditor?.isFocused
+            ? 'border-l-[var(--terminal-accent-dim)]'
+            : 'border-l-[var(--terminal-accent)]'
+          : 'border-l-transparent'
       }`}
     >
       {/* Task Header with Preview */}
@@ -94,7 +103,10 @@ export function TaskGroup({
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <Wrench className="w-4 h-4 text-accent" />
-            <span className="font-medium">{truncate(description, 80)}</span>
+            <div className="text-sm text-muted-foreground">
+              <span className="font-semibold">{displayName}: </span>
+              {description}
+            </div>
             {!isCompleted && <CircleDashed className="w-4 h-4 animate-spin text-muted-foreground" />}
             {hasPendingApproval && (
               <span className="text-xs bg-warning/20 text-warning px-2 py-0.5 rounded">
@@ -125,7 +137,8 @@ export function TaskGroup({
                       } else if (latestEvent.toolName === 'Bash' && toolInput.command) {
                         previewText = `$ ${truncate(toolInput.command, 50)}`
                       } else if (latestEvent.toolName === 'Task' && toolInput.description) {
-                        previewText = truncate(toolInput.description, 80)
+                        const taskName = toolInput.subagent_type ? toolInput.subagent_type + ': ' : ''
+                        previewText = taskName + truncate(toolInput.description, 80 - taskName.length)
                       }
                     } catch {
                       // Keep default preview text if JSON parsing fails
@@ -183,6 +196,7 @@ export function TaskGroup({
               subEvent.toolId ? toolResultsByKey[subEvent.toolId] : undefined,
               focusedEventId === subEvent.id,
               getSnapshot,
+              responseEditor?.getText(),
             )
 
             if (!displayObject) return null
@@ -209,10 +223,17 @@ export function TaskGroup({
                     setConfirmingApprovalId?.(null)
                   }}
                   onClick={() => {
+                    // Don't open modal if user has selected text
+                    if (hasTextSelection()) {
+                      return
+                    }
+
                     const event = subEvent
                     if (event?.eventType === ConversationEventType.ToolCall) {
                       const toolResult = event.toolId ? toolResultsByKey[event.toolId] : null
                       if (setExpandedToolResult && setExpandedToolCall) {
+                        // Clear focus when opening modal to prevent double escape handling
+                        setFocusedEventId(null)
                         setExpandedToolResult(toolResult || null)
                         setExpandedToolCall(event)
                       }
@@ -247,10 +268,10 @@ export function TaskGroup({
                     </div>
 
                     {/* Right side: Timestamp */}
-                    <div className="shrink-0">
+                    <div className="w-[160px] text-right">
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span className="text-xs text-muted-foreground/60 cursor-help">
+                          <span className="text-xs text-muted-foreground/60 cursor-help text-right block">
                             {displayObject.created_at ? formatTimestamp(displayObject.created_at) : ''}
                           </span>
                         </TooltipTrigger>

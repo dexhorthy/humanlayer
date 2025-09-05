@@ -16,6 +16,8 @@ type ConversationStore interface {
 	GetSession(ctx context.Context, sessionID string) (*Session, error)
 	GetSessionByRunID(ctx context.Context, runID string) (*Session, error)
 	ListSessions(ctx context.Context) ([]*Session, error)
+	// GetExpiredDangerousPermissionsSessions returns sessions where dangerous permissions have expired
+	GetExpiredDangerousPermissionsSessions(ctx context.Context) ([]*Session, error)
 
 	// Conversation operations
 	AddConversationEvent(ctx context.Context, event *ConversationEvent) error
@@ -29,7 +31,7 @@ type ConversationStore interface {
 	GetToolCallByID(ctx context.Context, toolID string) (*ConversationEvent, error)
 	MarkToolCallCompleted(ctx context.Context, toolID string, sessionID string) error
 	CorrelateApproval(ctx context.Context, sessionID string, toolName string, approvalID string) error
-	CorrelateApprovalByToolID(ctx context.Context, sessionID string, toolID string, approvalID string) error
+	LinkConversationEventToApprovalUsingToolID(ctx context.Context, sessionID string, toolID string, approvalID string) error
 	UpdateApprovalStatus(ctx context.Context, approvalID string, status string) error
 
 	// MCP server operations
@@ -51,59 +53,95 @@ type ConversationStore interface {
 	// Recent paths operations
 	GetRecentWorkingDirs(ctx context.Context, limit int) ([]RecentPath, error)
 
+	// User settings operations
+	GetUserSettings(ctx context.Context) (*UserSettings, error)
+	UpdateUserSettings(ctx context.Context, settings UserSettings) error
+
 	// Database lifecycle
 	Close() error
 }
 
+// UserSettings represents user preferences
+type UserSettings struct {
+	AdvancedProviders bool      `json:"advanced_providers"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 // Session represents a Claude Code session
 type Session struct {
-	ID                   string
-	RunID                string
-	ClaudeSessionID      string
-	ParentSessionID      string
-	Query                string
-	Summary              string
-	Title                string // New field for user-editable title
-	Model                string
-	WorkingDir           string
-	MaxTurns             int
-	SystemPrompt         string
-	AppendSystemPrompt   string // NEW: Append to system prompt
-	CustomInstructions   string
-	PermissionPromptTool string // NEW: MCP tool for permission prompts
-	AllowedTools         string // NEW: JSON array of allowed tools
-	DisallowedTools      string // NEW: JSON array of disallowed tools
-	Status               string
-	CreatedAt            time.Time
-	LastActivityAt       time.Time
-	CompletedAt          *time.Time
-	CostUSD              *float64
-	TotalTokens          *int
-	DurationMS           *int
-	NumTurns             *int
-	ResultContent        string
-	ErrorMessage         string
-	AutoAcceptEdits      bool `db:"auto_accept_edits"`
-	Archived             bool // New field for session archiving
+	ID                                  string
+	RunID                               string
+	ClaudeSessionID                     string
+	ParentSessionID                     string
+	Query                               string
+	Summary                             string
+	Title                               string // New field for user-editable title
+	Model                               string
+	ModelID                             string // Full model identifier (e.g., "claude-opus-4-1-20250805")
+	WorkingDir                          string
+	MaxTurns                            int
+	SystemPrompt                        string
+	AppendSystemPrompt                  string // NEW: Append to system prompt
+	CustomInstructions                  string
+	PermissionPromptTool                string // NEW: MCP tool for permission prompts
+	AllowedTools                        string // NEW: JSON array of allowed tools
+	DisallowedTools                     string // NEW: JSON array of disallowed tools
+	Status                              string
+	CreatedAt                           time.Time
+	LastActivityAt                      time.Time
+	CompletedAt                         *time.Time
+	CostUSD                             *float64
+	InputTokens                         *int `db:"input_tokens"`
+	OutputTokens                        *int `db:"output_tokens"`
+	CacheCreationInputTokens            *int `db:"cache_creation_input_tokens"`
+	CacheReadInputTokens                *int `db:"cache_read_input_tokens"`
+	EffectiveContextTokens              *int `db:"effective_context_tokens"`
+	DurationMS                          *int
+	NumTurns                            *int
+	ResultContent                       string
+	ErrorMessage                        string
+	AutoAcceptEdits                     bool       `db:"auto_accept_edits"`
+	DangerouslySkipPermissions          bool       `db:"dangerously_skip_permissions"`
+	DangerouslySkipPermissionsExpiresAt *time.Time `db:"dangerously_skip_permissions_expires_at"`
+	Archived                            bool       // New field for session archiving
+
+	// Proxy configuration
+	ProxyEnabled       bool   `db:"proxy_enabled"`
+	ProxyBaseURL       string `db:"proxy_base_url"`
+	ProxyModelOverride string `db:"proxy_model_override"`
+	ProxyAPIKey        string `db:"proxy_api_key"`
 }
 
 // SessionUpdate contains fields that can be updated
 type SessionUpdate struct {
-	ClaudeSessionID *string
-	Summary         *string
-	Title           *string // New field for updating title
-	Status          *string
-	LastActivityAt  *time.Time
-	CompletedAt     *time.Time
-	CostUSD         *float64
-	TotalTokens     *int
-	DurationMS      *int
-	NumTurns        *int
-	ResultContent   *string
-	ErrorMessage    *string
-	AutoAcceptEdits *bool `db:"auto_accept_edits"`
-	Model           *string
-	Archived        *bool // New field for updating archived status
+	ClaudeSessionID                     *string
+	Summary                             *string
+	Title                               *string // New field for updating title
+	Status                              *string
+	LastActivityAt                      *time.Time
+	CompletedAt                         *time.Time
+	CostUSD                             *float64
+	InputTokens                         *int
+	OutputTokens                        *int
+	CacheCreationInputTokens            *int
+	CacheReadInputTokens                *int
+	EffectiveContextTokens              *int
+	DurationMS                          *int
+	NumTurns                            *int
+	ResultContent                       *string
+	ErrorMessage                        *string
+	AutoAcceptEdits                     *bool       `db:"auto_accept_edits"`
+	DangerouslySkipPermissions          *bool       `db:"dangerously_skip_permissions"`
+	DangerouslySkipPermissionsExpiresAt **time.Time `db:"dangerously_skip_permissions_expires_at"`
+	Model                               *string
+	ModelID                             *string // Full model identifier
+	Archived                            *bool   // New field for updating archived status
+	// New proxy fields
+	ProxyEnabled       *bool   `db:"proxy_enabled"`
+	ProxyBaseURL       *string `db:"proxy_base_url"`
+	ProxyModelOverride *string `db:"proxy_model_override"`
+	ProxyAPIKey        *string `db:"proxy_api_key"`
 }
 
 // ConversationEvent represents a single event in a conversation
@@ -185,6 +223,7 @@ type Approval struct {
 	ID          string          `json:"id"`
 	RunID       string          `json:"run_id"`
 	SessionID   string          `json:"session_id"`
+	ToolUseID   *string         `json:"tool_use_id,omitempty"`
 	Status      ApprovalStatus  `json:"status"`
 	CreatedAt   time.Time       `json:"created_at"`
 	RespondedAt *time.Time      `json:"responded_at,omitempty"`
@@ -236,10 +275,11 @@ func NewSessionFromConfig(id, runID string, config claudecode.SessionConfig) *Se
 	allowedToolsJSON, _ := json.Marshal(config.AllowedTools)
 	disallowedToolsJSON, _ := json.Marshal(config.DisallowedTools)
 
-	return &Session{
+	session := &Session{
 		ID:                   id,
 		RunID:                runID,
 		Query:                config.Query,
+		Title:                "", // TODO: config.Title field not available in claudecode.SessionConfig
 		Model:                string(config.Model),
 		WorkingDir:           config.WorkingDir,
 		MaxTurns:             config.MaxTurns,
@@ -253,4 +293,9 @@ func NewSessionFromConfig(id, runID string, config claudecode.SessionConfig) *Se
 		CreatedAt:            time.Now(),
 		LastActivityAt:       time.Now(),
 	}
+
+	// Note: Proxy configuration should be explicitly set by the user
+	// through the UI, not auto-detected from environment variables
+
+	return session
 }

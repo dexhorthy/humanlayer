@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -14,17 +16,38 @@ import (
 	"github.com/humanlayer/humanlayer/hld/approval"
 	"github.com/humanlayer/humanlayer/hld/bus"
 	"github.com/humanlayer/humanlayer/hld/config"
+	"github.com/humanlayer/humanlayer/hld/mcp"
 	"github.com/humanlayer/humanlayer/hld/session"
 	"github.com/humanlayer/humanlayer/hld/store"
 )
+
+// getHTTPShutdownTimeout returns the timeout for HTTP server graceful shutdown
+func getHTTPShutdownTimeout() time.Duration {
+	if timeoutStr := os.Getenv("HUMANLAYER_HLD_HTTP_SHUTDOWN_TIMEOUT"); timeoutStr != "" {
+		if timeout, err := time.ParseDuration(timeoutStr); err == nil {
+			slog.Info("using custom HTTP shutdown timeout", "timeout", timeout)
+			return timeout
+		} else {
+			slog.Warn("invalid HUMANLAYER_HLD_HTTP_SHUTDOWN_TIMEOUT, using default",
+				"value", timeoutStr, "error", err)
+		}
+	}
+	return 2 * time.Second // Reduced from 30s
+}
 
 // HTTPServer manages the REST API server
 type HTTPServer struct {
 	config           *config.Config
 	router           *gin.Engine
+	sessionManager   session.SessionManager
 	sessionHandlers  *handlers.SessionHandlers
 	approvalHandlers *handlers.ApprovalHandlers
 	sseHandler       *handlers.SSEHandler
+	proxyHandler     *handlers.ProxyHandler
+	configHandler    *handlers.ConfigHandler
+	settingsHandlers *handlers.SettingsHandlers
+	approvalManager  approval.Manager
+	eventBus         bus.EventBus
 	server           *http.Server
 }
 
@@ -60,23 +83,32 @@ func NewHTTPServer(
 	}))
 
 	// Create handlers
-	sessionHandlers := handlers.NewSessionHandlers(sessionManager, conversationStore, approvalManager)
+	sessionHandlers := handlers.NewSessionHandlersWithConfig(sessionManager, conversationStore, approvalManager, cfg)
 	approvalHandlers := handlers.NewApprovalHandlers(approvalManager, sessionManager)
 	sseHandler := handlers.NewSSEHandler(eventBus)
+	proxyHandler := handlers.NewProxyHandler(sessionManager, conversationStore)
+	configHandler := handlers.NewConfigHandler()
+	settingsHandlers := handlers.NewSettingsHandlers(conversationStore)
 
 	return &HTTPServer{
 		config:           cfg,
 		router:           router,
+		sessionManager:   sessionManager,
 		sessionHandlers:  sessionHandlers,
 		approvalHandlers: approvalHandlers,
 		sseHandler:       sseHandler,
+		proxyHandler:     proxyHandler,
+		configHandler:    configHandler,
+		settingsHandlers: settingsHandlers,
+		approvalManager:  approvalManager,
+		eventBus:         eventBus,
 	}
 }
 
 // Start starts the HTTP server
 func (s *HTTPServer) Start(ctx context.Context) error {
 	// Create server implementation combining all handlers
-	serverImpl := handlers.NewServerImpl(s.sessionHandlers, s.approvalHandlers, s.sseHandler)
+	serverImpl := handlers.NewServerImpl(s.sessionHandlers, s.approvalHandlers, s.sseHandler, s.settingsHandlers)
 
 	// Create strict handler with middleware
 	strictHandler := api.NewStrictHandler(serverImpl, nil)
@@ -90,17 +122,51 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Register SSE endpoint directly (not part of strict interface)
 	v1.GET("/stream/events", s.sseHandler.StreamEvents)
 
-	// Create HTTP server
+	// Register proxy endpoint directly (not part of strict interface)
+	v1.POST("/anthropic_proxy/:session_id/v1/messages", s.proxyHandler.ProxyAnthropicRequest)
+
+	// Register config status endpoint
+	v1.GET("/config/status", s.configHandler.GetConfigStatus)
+
+	// MCP endpoint (Phase 5: with event-driven approvals)
+	mcpServer := mcp.NewMCPServer(s.approvalManager, s.eventBus)
+	mcpServer.Start(ctx) // Start background processes with context
+	v1.Any("/mcp", func(c *gin.Context) {
+		mcpServer.ServeHTTP(c.Writer, c.Request)
+	})
+
+	// Create listener first to handle port 0
 	addr := fmt.Sprintf("%s:%d", s.config.HTTPHost, s.config.HTTPPort)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+
+	// Get actual port after binding
+	actualAddr := listener.Addr().(*net.TCPAddr)
+	actualPort := actualAddr.Port
+
+	// If port 0 was used, output actual port to stdout
+	if s.config.HTTPPort == 0 {
+		fmt.Printf("HTTP_PORT=%d\n", actualPort)
+	}
+
+	// Update session manager with the actual HTTP port
+	s.sessionManager.SetHTTPPort(actualPort)
+
+	slog.Info("Starting HTTP server",
+		"configured_port", s.config.HTTPPort,
+		"actual_address", actualAddr.String())
+
+	// Create HTTP server
 	s.server = &http.Server{
-		Addr:    addr,
 		Handler: s.router,
 	}
 
 	// Start server in goroutine
 	go func() {
-		slog.Info("Starting HTTP server", "address", addr)
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		// Use the existing listener
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server error", "error", err)
 		}
 	}()
@@ -117,7 +183,8 @@ func (s *HTTPServer) Shutdown() error {
 	}
 
 	slog.Info("Shutting down HTTP server")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeout := getHTTPShutdownTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	return s.server.Shutdown(ctx)

@@ -239,6 +239,47 @@ func TestClient_WorkingDirectoryHandling(t *testing.T) {
 	}
 }
 
+func TestClient_LaunchWithEnvironmentVariables(t *testing.T) {
+	// Skip if no API key
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		t.Skip("ANTHROPIC_API_KEY not set")
+	}
+
+	client, err := claudecode.NewClient()
+	if err != nil {
+		t.Skip("claude binary not found in PATH")
+	}
+
+	config := claudecode.SessionConfig{
+		Query: "What is 2+2? Please just respond with the number.",
+		Env: map[string]string{
+			"ANTHROPIC_BASE_URL": "http://test-proxy:8080",
+			"TEST_ENV_VAR":       "test_value",
+		},
+		OutputFormat: claudecode.OutputText,
+		Model:        claudecode.ModelSonnet,
+	}
+
+	session, err := client.Launch(config)
+	if err != nil {
+		t.Fatalf("failed to launch session with environment variables: %v", err)
+	}
+
+	// Note: Can't directly verify env vars were set, but launch should succeed
+	// In integration tests, we'll verify the proxy URL is actually used
+
+	// Kill the session early since we can't actually connect to the test proxy
+	// This will cause an error but proves the env vars were passed
+	_ = session.Kill()
+	_, err = session.Wait()
+	// We expect an error here since we're using a fake proxy URL
+	if err == nil {
+		t.Error("expected error when using invalid proxy URL, but got none")
+	}
+
+	t.Log("Successfully launched Claude with custom environment variables")
+}
+
 func TestClaudeCodeSchemaCompatibility(t *testing.T) {
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		t.Skip("ANTHROPIC_API_KEY not set")
@@ -491,4 +532,42 @@ func TestClaudeCodeSchemaCompatibility(t *testing.T) {
 			t.Logf("Strict schema validation passed - no unexpected fields in Claude Code output")
 		}
 	})
+}
+
+func TestStreamEventWithPermissionDenials(t *testing.T) {
+	// Simulate Claude API response with permission denials
+	jsonData := `{
+		"type": "result",
+		"subtype": "completion",
+		"session_id": "test-session",
+		"total_cost_usd": 0.05,
+		"is_error": false,
+		"result": "Successfully created PR #430",
+		"permission_denials": [{
+			"tool_name": "Bash",
+			"tool_use_id": "toolu_01M6qJZgpwjmzg14TBS5Mwhm",
+			"tool_input": {"command": "git fetch origin main"}
+		}]
+	}`
+
+	var event claudecode.StreamEvent
+	err := json.Unmarshal([]byte(jsonData), &event)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal event with permission denials: %v", err)
+	}
+
+	// Verify permission denials were parsed
+	if event.PermissionDenials == nil || len(event.PermissionDenials.Denials) != 1 {
+		t.Error("Permission denials not properly parsed")
+	}
+
+	// Verify session is not marked as error despite denials
+	if event.IsError {
+		t.Error("Event marked as error when it should be successful with denials")
+	}
+
+	// Verify denial details
+	if event.PermissionDenials.Denials[0].ToolName != "Bash" {
+		t.Errorf("Expected tool name 'Bash', got %s", event.PermissionDenials.Denials[0].ToolName)
+	}
 }

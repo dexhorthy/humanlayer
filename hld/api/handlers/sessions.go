@@ -5,13 +5,19 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"sort"
+	"time"
+
 	claudecode "github.com/humanlayer/humanlayer/claudecode-go"
 	"github.com/humanlayer/humanlayer/hld/api"
 	"github.com/humanlayer/humanlayer/hld/api/mapper"
 	"github.com/humanlayer/humanlayer/hld/approval"
+	"github.com/humanlayer/humanlayer/hld/config"
+	"github.com/humanlayer/humanlayer/hld/internal/version"
 	"github.com/humanlayer/humanlayer/hld/session"
 	"github.com/humanlayer/humanlayer/hld/store"
-	"sort"
 )
 
 type SessionHandlers struct {
@@ -20,6 +26,7 @@ type SessionHandlers struct {
 	approvalManager approval.Manager
 	mapper          *mapper.Mapper
 	version         string
+	config          *config.Config
 }
 
 func NewSessionHandlers(manager session.SessionManager, store store.ConversationStore, approvalManager approval.Manager) *SessionHandlers {
@@ -28,19 +35,52 @@ func NewSessionHandlers(manager session.SessionManager, store store.Conversation
 		store:           store,
 		approvalManager: approvalManager,
 		mapper:          &mapper.Mapper{},
-		version:         "0.1.0", // TODO: Get from build info
+		version:         version.GetVersion(), // TODO(4): Add support for full point releases
+	}
+}
+
+func NewSessionHandlersWithConfig(manager session.SessionManager, store store.ConversationStore, approvalManager approval.Manager, cfg *config.Config) *SessionHandlers {
+	return &SessionHandlers{
+		manager:         manager,
+		store:           store,
+		approvalManager: approvalManager,
+		mapper:          &mapper.Mapper{},
+		version:         version.GetVersion(),
+		config:          cfg,
 	}
 }
 
 // CreateSession implements POST /sessions
 func (h *SessionHandlers) CreateSession(ctx context.Context, req api.CreateSessionRequestObject) (api.CreateSessionResponseObject, error) {
-	config := claudecode.SessionConfig{
-		Query:        req.Body.Query,
-		MCPConfig:    h.mapper.MCPConfigFromAPI(req.Body.McpConfig),
-		OutputFormat: claudecode.OutputStreamJSON, // Always use streaming JSON for monitoring
+	// Build launch config with embedded Claude config
+	config := session.LaunchSessionConfig{
+		SessionConfig: claudecode.SessionConfig{
+			Query:        req.Body.Query,
+			MCPConfig:    h.mapper.MCPConfigFromAPI(req.Body.McpConfig),
+			OutputFormat: claudecode.OutputStreamJSON, // Always use streaming JSON for monitoring
+		},
+	}
+
+	// Handle proxy configuration
+	// Note: OpenAPI generates ProxyBaseUrl/ProxyApiKey (following JSON conventions)
+	// but we map to ProxyBaseURL/ProxyAPIKey (following Go conventions for acronyms)
+	if req.Body.ProxyEnabled != nil && *req.Body.ProxyEnabled {
+		config.ProxyEnabled = true
+		if req.Body.ProxyBaseUrl != nil {
+			config.ProxyBaseURL = *req.Body.ProxyBaseUrl // Intentional: ProxyBaseUrl -> ProxyBaseURL
+		}
+		if req.Body.ProxyModelOverride != nil {
+			config.ProxyModelOverride = *req.Body.ProxyModelOverride
+		}
+		if req.Body.ProxyApiKey != nil {
+			config.ProxyAPIKey = *req.Body.ProxyApiKey // Intentional: ProxyApiKey -> ProxyAPIKey
+		}
 	}
 
 	// Handle optional fields
+	if req.Body.Title != nil {
+		config.Title = *req.Body.Title
+	}
 	if req.Body.PermissionPromptTool != nil {
 		config.PermissionPromptTool = *req.Body.PermissionPromptTool
 	}
@@ -67,6 +107,15 @@ func (h *SessionHandlers) CreateSession(ctx context.Context, req api.CreateSessi
 	}
 	if req.Body.Verbose != nil {
 		config.Verbose = *req.Body.Verbose
+	}
+	if req.Body.AutoAcceptEdits != nil {
+		config.AutoAcceptEdits = *req.Body.AutoAcceptEdits
+	}
+	if req.Body.DangerouslySkipPermissions != nil {
+		config.DangerouslySkipPermissions = *req.Body.DangerouslySkipPermissions
+		if req.Body.DangerouslySkipPermissionsTimeout != nil {
+			config.DangerouslySkipPermissionsTimeout = req.Body.DangerouslySkipPermissionsTimeout
+		}
 	}
 
 	// Parse model if provided
@@ -171,33 +220,30 @@ func (h *SessionHandlers) ListSessions(ctx context.Context, req api.ListSessions
 	for i, info := range filtered {
 		// Convert Info to store.Session for mapper
 		storeSession := store.Session{
-			ID:              info.ID,
-			RunID:           info.RunID,
-			ClaudeSessionID: info.ClaudeSessionID,
-			ParentSessionID: info.ParentSessionID,
-			Status:          string(info.Status),
-			Query:           info.Query,
-			Summary:         info.Summary,
-			Title:           info.Title,
-			Model:           info.Model,
-			WorkingDir:      info.WorkingDir,
-			CreatedAt:       info.StartTime,
-			LastActivityAt:  info.LastActivityAt,
-			CompletedAt:     info.EndTime,
-			ErrorMessage:    info.Error,
-			AutoAcceptEdits: info.AutoAcceptEdits,
-			Archived:        info.Archived,
+			ID:                                  info.ID,
+			RunID:                               info.RunID,
+			ClaudeSessionID:                     info.ClaudeSessionID,
+			ParentSessionID:                     info.ParentSessionID,
+			Status:                              string(info.Status),
+			Query:                               info.Query,
+			Summary:                             info.Summary,
+			Title:                               info.Title,
+			Model:                               info.Model,
+			WorkingDir:                          info.WorkingDir,
+			CreatedAt:                           info.StartTime,
+			LastActivityAt:                      info.LastActivityAt,
+			CompletedAt:                         info.EndTime,
+			ErrorMessage:                        info.Error,
+			AutoAcceptEdits:                     info.AutoAcceptEdits,
+			DangerouslySkipPermissions:          info.DangerouslySkipPermissions,
+			DangerouslySkipPermissionsExpiresAt: info.DangerouslySkipPermissionsExpiresAt,
+			Archived:                            info.Archived,
 		}
 
 		// Copy result data if available
 		if info.Result != nil {
 			storeSession.CostUSD = &info.Result.CostUSD
 			storeSession.DurationMS = &info.Result.DurationMS
-			// Calculate total tokens from usage if available
-			if info.Result.Usage != nil {
-				totalTokens := info.Result.Usage.InputTokens + info.Result.Usage.OutputTokens
-				storeSession.TotalTokens = &totalTokens
-			}
 		}
 
 		sessions[i] = h.mapper.SessionToAPI(storeSession)
@@ -241,6 +287,9 @@ func (h *SessionHandlers) GetSession(ctx context.Context, req api.GetSessionRequ
 
 // UpdateSession updates session settings (auto-accept, archived status)
 func (h *SessionHandlers) UpdateSession(ctx context.Context, req api.UpdateSessionRequestObject) (api.UpdateSessionResponseObject, error) {
+	// Debug log incoming request
+	slog.Info("UpdateSession called", "sessionId", req.Id, "body", req.Body)
+
 	update := store.SessionUpdate{}
 
 	// Update auto-accept if specified
@@ -258,8 +307,54 @@ func (h *SessionHandlers) UpdateSession(ctx context.Context, req api.UpdateSessi
 		update.Title = req.Body.Title
 	}
 
-	err := h.store.UpdateSession(ctx, string(req.Id), update)
+	// Update dangerously skip permissions if specified
+	if req.Body.DangerouslySkipPermissions != nil {
+		update.DangerouslySkipPermissions = req.Body.DangerouslySkipPermissions
+	}
+
+	// Update dangerously skip permissions timeout if specified
+	if req.Body.DangerouslySkipPermissionsTimeoutMs != nil {
+		timeoutMs := *req.Body.DangerouslySkipPermissionsTimeoutMs
+		if timeoutMs > 0 {
+			// Convert milliseconds to time.Time
+			expiresAt := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+			expiresAtPtr := &expiresAt
+			update.DangerouslySkipPermissionsExpiresAt = &expiresAtPtr
+		} else {
+			// Clear the expiration if timeout is 0
+			var nilTime *time.Time
+			update.DangerouslySkipPermissionsExpiresAt = &nilTime
+		}
+	}
+
+	// Update model if specified
+	if req.Body.Model != nil {
+		update.Model = req.Body.Model
+	}
+	if req.Body.ModelId != nil {
+		update.ModelID = req.Body.ModelId
+	}
+
+	// Update proxy configuration if specified
+	// Note: OpenAPI generates ProxyBaseUrl/ProxyApiKey (following JSON conventions)
+	// but we map to ProxyBaseURL/ProxyAPIKey (following Go conventions for acronyms)
+	if req.Body.ProxyEnabled != nil {
+		update.ProxyEnabled = req.Body.ProxyEnabled
+	}
+	if req.Body.ProxyBaseUrl != nil {
+		update.ProxyBaseURL = req.Body.ProxyBaseUrl // Intentional: ProxyBaseUrl -> ProxyBaseURL
+	}
+	if req.Body.ProxyModelOverride != nil {
+		update.ProxyModelOverride = req.Body.ProxyModelOverride
+	}
+	if req.Body.ProxyApiKey != nil {
+		update.ProxyAPIKey = req.Body.ProxyApiKey // Intentional: ProxyApiKey -> ProxyAPIKey
+	}
+
+	err := h.manager.UpdateSessionSettings(ctx, string(req.Id), update)
 	if err != nil {
+		// Log the actual error for debugging
+		slog.Error("UpdateSession error", "error", err, "sessionId", req.Id, "update", update)
 		if errors.Is(err, sql.ErrNoRows) {
 			return api.UpdateSession404JSONResponse{
 				NotFoundJSONResponse: api.NotFoundJSONResponse{
@@ -596,4 +691,58 @@ func (h *SessionHandlers) GetHealth(ctx context.Context, req api.GetHealthReques
 		Status:  api.Ok,
 		Version: h.version,
 	}, nil
+}
+
+// GetDebugInfo returns debug information about the daemon
+func (h *SessionHandlers) GetDebugInfo(ctx context.Context, req api.GetDebugInfoRequestObject) (api.GetDebugInfoResponseObject, error) {
+	stats := make(map[string]int64)
+	var size int64
+	var lastModified *time.Time
+
+	// Get database path from config if available
+	dbPath := ""
+	if h.config != nil {
+		dbPath = h.config.DatabasePath
+	}
+
+	// Get file stats if path is available and not in-memory
+	if dbPath != "" && dbPath != ":memory:" {
+		if fileInfo, err := os.Stat(dbPath); err == nil {
+			size = fileInfo.Size()
+			modTime := fileInfo.ModTime()
+			lastModified = &modTime
+		}
+	}
+
+	// Get table counts from the store
+	if sqliteStore, ok := h.store.(*store.SQLiteStore); ok {
+		// Get session count
+		if count, err := sqliteStore.GetSessionCount(ctx); err == nil {
+			stats["sessions"] = int64(count)
+		}
+
+		// Get approval count
+		if count, err := sqliteStore.GetApprovalCount(ctx); err == nil {
+			stats["approvals"] = int64(count)
+		}
+
+		// Get event count
+		if count, err := sqliteStore.GetEventCount(ctx); err == nil {
+			stats["events"] = int64(count)
+		}
+	}
+
+	response := api.GetDebugInfo200JSONResponse{
+		Path:       dbPath,
+		Size:       size,
+		TableCount: 5, // We have 5 tables: sessions, conversation_events, approvals, mcp_servers, schema_version
+		Stats:      stats,
+		CliCommand: config.DefaultCLICommand,
+	}
+
+	if lastModified != nil {
+		response.LastModified = lastModified
+	}
+
+	return response, nil
 }

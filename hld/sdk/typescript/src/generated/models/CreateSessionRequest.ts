@@ -34,6 +34,12 @@ export interface CreateSessionRequest {
      */
     query: string;
     /**
+     * Optional title for the session
+     * @type {string}
+     * @memberof CreateSessionRequest
+     */
+    title?: string;
+    /**
      * Model to use for the session
      * @type {string}
      * @memberof CreateSessionRequest
@@ -94,11 +100,53 @@ export interface CreateSessionRequest {
      */
     customInstructions?: string;
     /**
+     * Enable auto-accept for edit tools
+     * @type {boolean}
+     * @memberof CreateSessionRequest
+     */
+    autoAcceptEdits?: boolean;
+    /**
+     * Launch session with dangerously skip permissions enabled
+     * @type {boolean}
+     * @memberof CreateSessionRequest
+     */
+    dangerouslySkipPermissions?: boolean;
+    /**
+     * Optional default timeout in milliseconds for dangerously skip permissions
+     * @type {number}
+     * @memberof CreateSessionRequest
+     */
+    dangerouslySkipPermissionsTimeout?: number;
+    /**
      * Enable verbose output
      * @type {boolean}
      * @memberof CreateSessionRequest
      */
     verbose?: boolean;
+    /**
+     * Enable proxy routing for this session
+     * @type {boolean}
+     * @memberof CreateSessionRequest
+     */
+    proxyEnabled?: boolean;
+    /**
+     * Base URL for proxy service
+     * @type {string}
+     * @memberof CreateSessionRequest
+     */
+    proxyBaseUrl?: string;
+    /**
+     * Model identifier for proxy routing
+     * @type {string}
+     * @memberof CreateSessionRequest
+     */
+    proxyModelOverride?: string;
+    /**
+     * API key for proxy authentication
+     * @type {string}
+     * @memberof CreateSessionRequest
+     */
+    proxyApiKey?: string;
 }
 
 
@@ -131,6 +179,7 @@ export function CreateSessionRequestFromJSONTyped(json: any, ignoreDiscriminator
     return {
 
         'query': json['query'],
+        'title': json['title'] == null ? undefined : json['title'],
         'model': json['model'] == null ? undefined : json['model'],
         'mcpConfig': json['mcp_config'] == null ? undefined : MCPConfigFromJSON(json['mcp_config']),
         'permissionPromptTool': json['permission_prompt_tool'] == null ? undefined : json['permission_prompt_tool'],
@@ -141,7 +190,14 @@ export function CreateSessionRequestFromJSONTyped(json: any, ignoreDiscriminator
         'allowedTools': json['allowed_tools'] == null ? undefined : json['allowed_tools'],
         'disallowedTools': json['disallowed_tools'] == null ? undefined : json['disallowed_tools'],
         'customInstructions': json['custom_instructions'] == null ? undefined : json['custom_instructions'],
+        'autoAcceptEdits': json['auto_accept_edits'] == null ? undefined : json['auto_accept_edits'],
+        'dangerouslySkipPermissions': json['dangerously_skip_permissions'] == null ? undefined : json['dangerously_skip_permissions'],
+        'dangerouslySkipPermissionsTimeout': json['dangerously_skip_permissions_timeout'] == null ? undefined : json['dangerously_skip_permissions_timeout'],
         'verbose': json['verbose'] == null ? undefined : json['verbose'],
+        'proxyEnabled': json['proxy_enabled'] == null ? undefined : json['proxy_enabled'],
+        'proxyBaseUrl': json['proxy_base_url'] == null ? undefined : json['proxy_base_url'],
+        'proxyModelOverride': json['proxy_model_override'] == null ? undefined : json['proxy_model_override'],
+        'proxyApiKey': json['proxy_api_key'] == null ? undefined : json['proxy_api_key'],
     };
 }
 
@@ -157,6 +213,7 @@ export function CreateSessionRequestToJSONTyped(value?: CreateSessionRequest | n
     return {
 
         'query': value['query'],
+        'title': value['title'],
         'model': value['model'],
         'mcp_config': MCPConfigToJSON(value['mcpConfig']),
         'permission_prompt_tool': value['permissionPromptTool'],
@@ -167,6 +224,13 @@ export function CreateSessionRequestToJSONTyped(value?: CreateSessionRequest | n
         'allowed_tools': value['allowedTools'],
         'disallowed_tools': value['disallowedTools'],
         'custom_instructions': value['customInstructions'],
+        'auto_accept_edits': value['autoAcceptEdits'],
+        'dangerously_skip_permissions': value['dangerouslySkipPermissions'],
+        'dangerously_skip_permissions_timeout': value['dangerouslySkipPermissionsTimeout'],
         'verbose': value['verbose'],
+        'proxy_enabled': value['proxyEnabled'],
+        'proxy_base_url': value['proxyBaseUrl'],
+        'proxy_model_override': value['proxyModelOverride'],
+        'proxy_api_key': value['proxyApiKey'],
     };
 }

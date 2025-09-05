@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/humanlayer/humanlayer/hld/approval"
@@ -37,17 +38,29 @@ func getShutdownTimeout() time.Duration {
 	return 5 * time.Second // default per ENG-1699 requirements
 }
 
+// getPermissionMonitorInterval returns the interval for dangerous skip permissions expiry checks
+func getPermissionMonitorInterval() time.Duration {
+	if intervalStr := os.Getenv("HLD_PERMISSION_MONITOR_INTERVAL"); intervalStr != "" {
+		if interval, err := time.ParseDuration(intervalStr); err == nil {
+			return interval
+		}
+		slog.Warn("invalid HLD_PERMISSION_MONITOR_INTERVAL, using default", "value", intervalStr)
+	}
+	return 30 * time.Second
+}
+
 // Daemon coordinates all daemon functionality
 type Daemon struct {
-	config     *config.Config
-	socketPath string
-	listener   net.Listener
-	rpcServer  *rpc.Server
-	httpServer *HTTPServer
-	sessions   session.SessionManager
-	approvals  approval.Manager
-	eventBus   bus.EventBus
-	store      store.ConversationStore
+	config            *config.Config
+	socketPath        string
+	listener          net.Listener
+	rpcServer         *rpc.Server
+	httpServer        *HTTPServer
+	sessions          session.SessionManager
+	approvals         approval.Manager
+	eventBus          bus.EventBus
+	store             store.ConversationStore
+	permissionMonitor *session.PermissionMonitor
 }
 
 // New creates a new daemon instance
@@ -115,12 +128,9 @@ func New() (*Daemon, error) {
 	approvalManager := approval.NewManager(conversationStore, eventBus)
 	slog.Debug("local approval manager created successfully")
 
-	// Create HTTP server if enabled
-	var httpServer *HTTPServer
-	if cfg.HTTPPort > 0 {
-		slog.Info("creating HTTP server", "port", cfg.HTTPPort)
-		httpServer = NewHTTPServer(cfg, sessionManager, approvalManager, conversationStore, eventBus)
-	}
+	// Create HTTP server (always enabled, port 0 means dynamic allocation)
+	slog.Info("creating HTTP server", "port", cfg.HTTPPort)
+	httpServer := NewHTTPServer(cfg, sessionManager, approvalManager, conversationStore, eventBus)
 
 	return &Daemon{
 		config:     cfg,
@@ -148,11 +158,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to set socket permissions: %w", err)
 	}
 
-	// Track if listener was already closed
+	// Track if listener was already closed and shutdown timing
 	listenerClosed := &struct{ closed bool }{}
+	var shutdownStart time.Time
 
 	// Ensure cleanup on exit
 	defer func() {
+		cleanupStart := time.Now()
 		if !listenerClosed.closed {
 			if err := listener.Close(); err != nil {
 				slog.Warn("failed to close listener", "error", err)
@@ -166,7 +178,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 				slog.Warn("failed to close store", "error", err)
 			}
 		}
-		slog.Info("cleaned up resources", "path", d.socketPath)
+		cleanupDuration := time.Since(cleanupStart)
+		var totalShutdownDuration time.Duration
+		if !shutdownStart.IsZero() {
+			totalShutdownDuration = time.Since(shutdownStart)
+		}
+		slog.Info("cleaned up resources",
+			"path", d.socketPath,
+			"cleanup_duration", cleanupDuration,
+			"total_shutdown_duration", totalShutdownDuration)
 	}()
 
 	// Create and start RPC server
@@ -181,6 +201,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 		slog.Warn("failed to mark orphaned sessions as failed", "error", err)
 		// Don't fail startup for this
 	}
+
+	// Create and start dangerous skip permissions monitor
+	permissionMonitor := session.NewPermissionMonitor(d.store, d.eventBus, getPermissionMonitorInterval())
+	d.permissionMonitor = permissionMonitor
+
+	// Start dangerous skip permissions monitor in background
+	go func() {
+		permissionMonitor.Start(ctx)
+	}()
+	slog.Info("started dangerous skip permissions expiry monitor")
 
 	// Register subscription handlers
 	subscriptionHandlers := rpc.NewSubscriptionHandlers(d.eventBus)
@@ -214,7 +244,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	// Wait for shutdown signal
 	<-ctx.Done()
-	slog.Info("shutdown signal received, stopping sessions")
+	shutdownStart = time.Now()
+	slog.Info("shutdown signal received, starting graceful shutdown",
+		"start_time", shutdownStart)
 
 	// Stop accepting new connections immediately
 	if err := listener.Close(); err != nil {
@@ -222,21 +254,51 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	listenerClosed.closed = true
 
-	// Gracefully stop all active sessions with configurable timeout
-	if d.sessions != nil {
-		shutdownTimeout := getShutdownTimeout()
-		slog.Info("stopping sessions with timeout", "timeout", shutdownTimeout)
+	// Use WaitGroup to coordinate parallel shutdown
+	var wg sync.WaitGroup
+	var sessionErr, httpErr error
 
-		if err := d.sessions.StopAllSessions(shutdownTimeout); err != nil {
-			slog.Error("error stopping sessions", "error", err)
-		}
+	// Start session shutdown in goroutine
+	if d.sessions != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			shutdownTimeout := getShutdownTimeout()
+			slog.Info("stopping sessions with timeout", "timeout", shutdownTimeout)
+
+			if err := d.sessions.StopAllSessions(shutdownTimeout); err != nil {
+				sessionErr = err
+				slog.Error("error stopping sessions", "error", err)
+			}
+		}()
 	}
 
-	// Stop HTTP server if running
+	// Start HTTP server shutdown in goroutine
 	if d.httpServer != nil {
-		if err := d.httpServer.Shutdown(); err != nil {
-			slog.Error("error shutting down HTTP server", "error", err)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slog.Info("initiating HTTP server shutdown")
+
+			if err := d.httpServer.Shutdown(); err != nil {
+				httpErr = err
+				slog.Error("error shutting down HTTP server", "error", err)
+			}
+		}()
+	}
+
+	// Wait for both operations to complete
+	slog.Info("waiting for parallel shutdown operations to complete")
+	wg.Wait()
+	slog.Info("all shutdown operations completed",
+		"duration", time.Since(shutdownStart))
+
+	// Return first error if any occurred
+	if sessionErr != nil {
+		return sessionErr
+	}
+	if httpErr != nil {
+		return httpErr
 	}
 
 	return nil

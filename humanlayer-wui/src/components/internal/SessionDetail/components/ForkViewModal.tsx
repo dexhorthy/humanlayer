@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { GitBranch } from 'lucide-react'
 import { useHotkeys } from 'react-hotkeys-hook'
 import {
@@ -10,7 +10,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { ConversationEvent, SessionStatus } from '@/lib/daemon/types'
+import { ConversationEvent } from '@/lib/daemon/types'
 import { cn } from '@/lib/utils'
 import { useStealHotkeyScope } from '@/hooks/useStealHotkeyScope'
 
@@ -22,23 +22,27 @@ interface ForkViewModalProps {
   onSelectEvent: (index: number | null) => void
   isOpen: boolean
   onOpenChange: (open: boolean) => void
-  sessionStatus?: SessionStatus
+  sessionStatus?: string // Add this
 }
 
 function ForkViewModalContent({
   events,
   selectedEventIndex,
   onSelectEvent,
-  onClose,
   sessionStatus,
+  onClose,
 }: Omit<ForkViewModalProps, 'isOpen' | 'onOpenChange'> & { onClose: () => void }) {
   // Steal hotkey scope when this component mounts
   useStealHotkeyScope(ForkViewModalHotkeysScope)
 
   // Focus management
   const containerRef = useRef<HTMLDivElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
+    // Store the previously focused element
+    previousFocusRef.current = document.activeElement as HTMLElement
+
     // Focus the container when modal opens
     if (containerRef.current) {
       containerRef.current.focus()
@@ -51,19 +55,33 @@ function ForkViewModalContent({
     }
   }, [])
 
+  // Create unified close handler without focus management
+  // Focus will be handled by the parent component
+  const handleClose = useCallback(() => {
+    onClose()
+  }, [onClose])
+
   // Filter to only user messages (excluding the first one)
   const userMessageIndices = events
     .map((e, i) => ({ event: e, index: i }))
     .filter(({ event }) => event.eventType === 'message' && event.role === 'user')
     .slice(1) // Exclude first message since it can't be forked
 
-  // Add current option as a special index (-1) only if session is not failed
-  const showCurrentOption = sessionStatus !== SessionStatus.Failed
+  // Add current option as a special index (-1) for all sessions
+  const showCurrentOption = true
   const allOptions = showCurrentOption
     ? [...userMessageIndices, { event: null, index: -1 }]
     : userMessageIndices
 
   const [localSelectedIndex, setLocalSelectedIndex] = useState(0)
+
+  // Pre-select last message for failed sessions
+  useEffect(() => {
+    if (sessionStatus === 'failed' && selectedEventIndex === null && allOptions.length > 0) {
+      // Pre-select the last user message for failed sessions
+      setLocalSelectedIndex(allOptions.length - 2) // Last message before "Current"
+    }
+  }, [sessionStatus, selectedEventIndex, allOptions.length])
 
   // Sync with external selection
   useEffect(() => {
@@ -127,9 +145,23 @@ function ForkViewModalContent({
     e => {
       e.preventDefault()
       e.stopPropagation()
-      if (selectedEventIndex !== null || localSelectedIndex === allOptions.length - 1) {
-        onClose()
+
+      // If nothing selected yet, select the currently highlighted item
+      if (selectedEventIndex === null && localSelectedIndex !== null) {
+        if (localSelectedIndex === allOptions.length - 1) {
+          // Selected "Current" option
+          onSelectEvent(null)
+        } else {
+          // Selected a fork point
+          const selectedOption = allOptions[localSelectedIndex]
+          if (selectedOption) {
+            onSelectEvent(selectedOption.index)
+          }
+        }
       }
+
+      // Always close on Enter (whether selecting or confirming)
+      handleClose()
     },
     { scopes: [ForkViewModalHotkeysScope], preventDefault: true },
   )
@@ -140,8 +172,9 @@ function ForkViewModalContent({
     e => {
       e.preventDefault()
       e.stopPropagation()
+      e.stopImmediatePropagation() // Complete isolation
       onSelectEvent(null) // Clear selection first
-      onClose()
+      handleClose() // Use unified handler
     },
     { scopes: [ForkViewModalHotkeysScope], preventDefault: true },
   )
@@ -180,6 +213,7 @@ function ForkViewModalContent({
                   onClick={() => {
                     setLocalSelectedIndex(position)
                     onSelectEvent(index)
+                    handleClose() // Close modal immediately on selection
                   }}
                   onMouseEnter={() => setLocalSelectedIndex(position)}
                 >
@@ -193,7 +227,7 @@ function ForkViewModalContent({
               )
             })}
 
-            {/* Current option - only show if session is not failed */}
+            {/* Current option */}
             {showCurrentOption && (
               <div className="border-t mt-2 pt-2">
                 <div
@@ -204,8 +238,9 @@ function ForkViewModalContent({
                       : 'hover:bg-accent/50',
                   )}
                   onClick={() => {
-                    onSelectEvent(null)
                     setLocalSelectedIndex(allOptions.length - 1)
+                    onSelectEvent(null)
+                    handleClose() // Close modal immediately
                   }}
                   onMouseEnter={() => setLocalSelectedIndex(allOptions.length - 1)}
                 >
@@ -221,7 +256,7 @@ function ForkViewModalContent({
 
         <div className="flex items-center justify-between text-xs text-muted-foreground mt-4 pt-4 border-t">
           <div className="flex items-center gap-4">
-            <span>↑↓ j/k Navigate</span>
+            <span>↑↓/j/k Navigate</span>
             <span>1-9 Jump</span>
             <span>Enter Select</span>
             <span>Esc Cancel</span>
@@ -242,7 +277,16 @@ export function ForkViewModal({
   sessionStatus,
 }: ForkViewModalProps) {
   return (
-    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={isOpen => {
+        if (!isOpen) {
+          onOpenChange(false)
+        } else {
+          onOpenChange(true)
+        }
+      }}
+    >
       <DialogTrigger asChild>
         <Button variant="ghost" size="sm" className="h-8 w-8 p-0" title="Fork View (Meta+Y)">
           <GitBranch className="h-4 w-4" />
@@ -256,8 +300,14 @@ export function ForkViewModal({
           // Prevent default focus behavior but let our custom focus management work
           e.preventDefault()
         }}
-        onInteractOutside={e => {
-          // Prevent closing when clicking outside
+        onCloseAutoFocus={e => {
+          // Prevent the dialog from restoring focus when it closes
+          // The parent component will handle focus restoration
+          e.preventDefault()
+        }}
+        onEscapeKeyDown={e => {
+          // Prevent the default Dialog escape handling
+          // Our custom escape handler in ForkViewModalContent will handle it
           e.preventDefault()
         }}
       >
@@ -266,8 +316,8 @@ export function ForkViewModal({
             events={events}
             selectedEventIndex={selectedEventIndex}
             onSelectEvent={onSelectEvent}
-            onClose={() => onOpenChange(false)}
             sessionStatus={sessionStatus}
+            onClose={() => onOpenChange(false)}
           />
         )}
       </DialogContent>

@@ -1,10 +1,12 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useHotkeys } from 'react-hotkeys-hook'
 import { useNavigate } from 'react-router-dom'
 import { Session, ConversationEvent, ViewMode } from '@/lib/daemon/types'
 import { daemonClient } from '@/lib/daemon/client'
 import { notificationService } from '@/services/NotificationService'
 import { useStore } from '@/AppStore'
+import { SessionDetailHotkeysScope } from '../SessionDetail'
+import { logger } from '@/lib/logging'
 
 interface UseSessionActionsProps {
   session: Session
@@ -20,9 +22,6 @@ export function useSessionActions({
   pendingForkMessage,
   onForkCommit,
 }: UseSessionActionsProps) {
-  const [responseInput, setResponseInput] = useState(
-    localStorage.getItem(`${ResponseInputLocalStorageKey}.${session.id}`) || '',
-  )
   const [isResponding, setIsResponding] = useState(false)
   const [forkFromSessionId, setForkFromSessionId] = useState<string | null>(null)
 
@@ -31,20 +30,52 @@ export function useSessionActions({
   const archiveSession = useStore(state => state.archiveSession)
   const setViewMode = useStore(state => state.setViewMode)
   const trackNavigationFrom = useStore(state => state.trackNavigationFrom)
+  const updateActiveSessionDetail = useStore(state => state.updateActiveSessionDetail)
+  const responseEditor = useStore(state => state.responseEditor)
   const navigate = useNavigate()
 
   // Update response input when fork message is selected
   useEffect(() => {
     if (pendingForkMessage) {
-      setResponseInput(pendingForkMessage.content || '')
+      responseEditor?.commands.setContent(pendingForkMessage.content || '')
       // Set the session ID to fork from (the one before this message)
       setForkFromSessionId(pendingForkMessage.sessionId || null)
+    } else {
+      // Clear fork state when pendingForkMessage is null (e.g., when selecting "Current")
+      setForkFromSessionId(null)
     }
-  }, [pendingForkMessage])
+  }, [pendingForkMessage, responseEditor])
 
   // Continue session functionality
   const handleContinueSession = useCallback(async () => {
-    if (!responseInput.trim() || isResponding) return
+    logger.log('handleContinueSession()')
+    const sessionConversation = useStore.getState().activeSessionDetail?.conversation
+
+    // Get the editor content and process mentions to use full paths
+    let responseInput = ''
+    if (responseEditor) {
+      const json = responseEditor.getJSON()
+
+      const processNode = (node: any): string => {
+        if (node.type === 'text') {
+          return node.text || ''
+        } else if (node.type === 'mention') {
+          // Use the full path (id) instead of the display label
+          return node.attrs.id || node.attrs.label || ''
+        } else if (node.type === 'paragraph' && node.content) {
+          return node.content.map(processNode).join('')
+        } else if (node.content) {
+          return node.content.map(processNode).join('\n')
+        }
+        return ''
+      }
+
+      if (json.content) {
+        responseInput = json.content.map(processNode).join('\n')
+      }
+    }
+
+    if (!responseInput?.trim() || isResponding) return
 
     try {
       setIsResponding(true)
@@ -67,6 +98,14 @@ export function useSessionActions({
 
       const response = await daemonClient.continueSession(targetSessionId, messageToSend)
 
+      if (!response.new_session_id) {
+        throw new Error('No new session ID returned from continueSession')
+      }
+
+      const nextSession = await daemonClient.getSessionState(response.new_session_id)
+
+      updateActiveSessionDetail(nextSession.session)
+
       // Clear fork state
       setForkFromSessionId(null)
 
@@ -76,13 +115,18 @@ export function useSessionActions({
       }
 
       // Always navigate to the new session - the backend handles queuing
-      navigate(`/sessions/${response.new_session_id || session.id}`)
+      navigate(`/sessions/${response.new_session_id || session.id}`, {
+        state: {
+          continuationSession: nextSession,
+          continuationConversation: sessionConversation,
+        },
+      })
 
       // Refresh the session list to ensure UI reflects current state
       await refreshSessions()
 
       // Reset form state only after success
-      setResponseInput('')
+      responseEditor?.commands.setContent('')
       localStorage.removeItem(`${ResponseInputLocalStorageKey}.${session.id}`)
     } catch (error) {
       notificationService.notifyError(error, 'Failed to continue session')
@@ -91,7 +135,7 @@ export function useSessionActions({
       setIsResponding(false)
     }
   }, [
-    responseInput,
+    responseEditor,
     isResponding,
     session.id,
     session.archived,
@@ -102,16 +146,6 @@ export function useSessionActions({
     forkFromSessionId,
     onForkCommit,
   ])
-
-  const handleResponseInputKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault()
-        handleContinueSession()
-      }
-    },
-    [handleContinueSession],
-  )
 
   // Navigate to parent session
   const handleNavigateToParent = useCallback(() => {
@@ -124,28 +158,36 @@ export function useSessionActions({
   // Note: Escape key is handled in SessionDetail to manage confirmingApprovalId state
 
   // Ctrl+X to interrupt session
-  useHotkeys('ctrl+x', () => {
-    if (session.status === 'running' || session.status === 'starting') {
-      interruptSession(session.id)
-    }
-  })
+  useHotkeys(
+    'ctrl+x',
+    () => {
+      if (session.status === 'running' || session.status === 'starting') {
+        interruptSession(session.id)
+      }
+    },
+    {
+      scopes: SessionDetailHotkeysScope,
+      enableOnFormTags: true,
+    },
+  )
 
   // R key - no longer needed since input is always visible
   // Keeping the hotkey registration but making it a no-op to avoid breaking anything
 
   // P key to navigate to parent session
-  useHotkeys('p', () => {
-    if (session.parentSessionId) {
-      handleNavigateToParent()
-    }
-  })
+  useHotkeys(
+    'p',
+    () => {
+      if (session.parentSessionId) {
+        handleNavigateToParent()
+      }
+    },
+    { scopes: SessionDetailHotkeysScope },
+  )
 
   return {
-    responseInput,
-    setResponseInput,
     isResponding,
     handleContinueSession,
-    handleResponseInputKeyDown,
     handleNavigateToParent,
     isForkMode: !!forkFromSessionId,
   }

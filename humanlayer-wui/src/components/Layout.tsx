@@ -1,28 +1,52 @@
 import { useState, useEffect } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useHotkeys } from 'react-hotkeys-hook'
-import { daemonClient, SessionStatus } from '@/lib/daemon'
+import { register } from '@tauri-apps/plugin-global-shortcut'
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import {
+  ApprovalResolvedEventData,
+  daemonClient,
+  NewApprovalEventData,
+  SessionSettingsChangedEventData,
+  SessionSettingsChangeReason,
+  SessionStatus,
+  SessionStatusChangedEventData,
+} from '@/lib/daemon'
 import { Button } from '@/components/ui/button'
 import { ThemeSelector } from '@/components/ThemeSelector'
 import { SessionLauncher } from '@/components/SessionLauncher'
 import { HotkeyPanel } from '@/components/HotkeyPanel'
 import { Breadcrumbs } from '@/components/Breadcrumbs'
+import { SettingsDialog } from '@/components/SettingsDialog'
 import { useSessionLauncher, useSessionLauncherHotkeys } from '@/hooks/useSessionLauncher'
 import { useDaemonConnection } from '@/hooks/useDaemonConnection'
 import { useStore } from '@/AppStore'
 import { useSessionSubscriptions } from '@/hooks/useSubscriptions'
 import { Toaster } from 'sonner'
-import { notificationService } from '@/services/NotificationService'
+import { notificationService, type NotificationOptions } from '@/services/NotificationService'
 import { useTheme } from '@/contexts/ThemeContext'
+import { formatMcpToolName, getSessionNotificationText } from '@/utils/formatting'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { MessageCircle } from 'lucide-react'
+import { MessageCircle, Bug, HelpCircle, Settings } from 'lucide-react'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { DebugPanel } from '@/components/DebugPanel'
+import { notifyLogLocation } from '@/lib/log-notification'
 import '@/App.css'
+import { logger } from '@/lib/logging'
+import { DangerousSkipPermissionsMonitor } from '@/components/DangerousSkipPermissionsMonitor'
+import { KeyboardShortcut } from '@/components/HotkeyPanel'
+import { DvdScreensaver } from '@/components/DvdScreensaver'
 
 export function Layout() {
   const [approvals, setApprovals] = useState<any[]>([])
   const [activeSessionId] = useState<string | null>(null)
   const { setTheme } = useTheme()
+  const [isDebugPanelOpen, setIsDebugPanelOpen] = useState(false)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const isSettingsDialogOpen = useStore(state => state.isSettingsDialogOpen)
+  const setSettingsDialogOpen = useStore(state => state.setSettingsDialogOpen)
 
   // Use the daemon connection hook for all connection management
   const { connected, connecting, version, connect } = useDaemonConnection()
@@ -39,27 +63,242 @@ export function Layout() {
     setTheme('launch')
   })
 
+  // Settings dialog hotkey
+  // TODO: We should bump this to "cmd+," later on
+  // There's some pain associated with doing this with MenuBuilder in Tauri, so saving for later
+  useHotkeys(
+    'mod+shift+s',
+    () => {
+      setSettingsDialogOpen(!isSettingsDialogOpen)
+    },
+    {
+      enableOnFormTags: true,
+    },
+  )
+
   // Get store actions
+  const updateSession = useStore(state => state.updateSession)
   const updateSessionStatus = useStore(state => state.updateSessionStatus)
+  const fetchUserSettings = useStore(state => state.fetchUserSettings)
+
+  // Fetch user settings when connected
+  useEffect(() => {
+    if (connected) {
+      fetchUserSettings()
+    }
+  }, [connected, fetchUserSettings])
   const refreshActiveSessionConversation = useStore(state => state.refreshActiveSessionConversation)
+  const clearNotificationsForSession = useStore(state => state.clearNotificationsForSession)
+  const wasRecentlyNavigatedFrom = useStore(state => state.wasRecentlyNavigatedFrom)
+  const addNotifiedItem = useStore(state => state.addNotifiedItem)
+  const isItemNotified = useStore(state => state.isItemNotified)
+  const addRecentResolvedApprovalToCache = useStore(state => state.addRecentResolvedApprovalToCache)
+  const isRecentResolvedApproval = useStore(state => state.isRecentResolvedApproval)
+  const setActiveSessionDetail = useStore(state => state.setActiveSessionDetail)
+  const updateActiveSessionDetail = useStore(state => state.updateActiveSessionDetail)
 
   // Set up single SSE subscription for all events
   useSessionSubscriptions(connected, {
-    onSessionStatusChanged: async data => {
-      console.log('useSessionSubscriptions.onSessionStatusChanged', data)
-      const { session_id, new_status } = data
-      updateSessionStatus(session_id, new_status as SessionStatus)
+    onSessionStatusChanged: async (data: SessionStatusChangedEventData) => {
+      logger.log('useSessionSubscriptions.onSessionStatusChanged', Date.now(), data)
+      const { session_id, new_status: nextStatus } = data
+      const targetSession = useStore.getState().sessions.find(s => s.id === session_id)
+      const previousStatus = targetSession?.status
+      const sessionResponse = await daemonClient.getSessionState(data.session_id)
+      const session = sessionResponse.session
+
+      // Always update the session in the sessions list
+      // Use updateSession (not updateSessionOptimistic) since this is data FROM the server
+      useStore.getState().updateSession(session_id, session)
+
+      // Update active session detail if this is the currently viewed session
+      const activeSessionId = useStore.getState().activeSessionDetail?.session?.id
+      if (activeSessionId === session_id) {
+        updateActiveSessionDetail(session)
+      }
+
+      if (!nextStatus) {
+        logger.warn('useSessionSubscriptions.onSessionStatusChanged: nextStatus is undefined', data)
+        return
+      }
+
+      // Clear notifications if session is no longer waiting_input
+      if (nextStatus !== undefined && nextStatus !== SessionStatus.WaitingInput) {
+        clearNotificationsForSession(session_id)
+      }
+
+      // Completed or Failed, but not in series
+      if (
+        (previousStatus !== SessionStatus.Completed && nextStatus === SessionStatus.Completed) ||
+        (previousStatus !== SessionStatus.Failed && nextStatus === SessionStatus.Failed)
+      ) {
+        logger.log(
+          `Session ${data.session_id} completed. Previous status: ${previousStatus}, checking navigation tracking...`,
+        )
+
+        if (wasRecentlyNavigatedFrom(data.session_id)) {
+          logger.log(
+            `Suppressing completion notification for recently navigated session ${data.session_id}`,
+          )
+          return
+        }
+
+        try {
+          const sessionText = getSessionNotificationText(session)
+
+          let notificationOptions: NotificationOptions = {
+            type: 'session_completed',
+            title: `Session Completed (${data.session_id.slice(0, 8)})`,
+            body: `Completed: ${sessionText}`,
+            metadata: {
+              sessionId: data.session_id,
+              model: session.model,
+            },
+            // Don't make this sticky - let it auto-dismiss
+            duration: undefined,
+          }
+
+          if (nextStatus === SessionStatus.Failed) {
+            notificationOptions.type = 'session_failed'
+            notificationOptions.title = `Session Failed (${data.session_id.slice(0, 8)})`
+            notificationOptions.body = session.errorMessage || `Failed: ${sessionText}`
+            notificationOptions.priority = 'high'
+          }
+
+          await notificationService.notify(notificationOptions)
+        } catch (error) {
+          logger.error('Failed to show completion notification:', error)
+        }
+      }
+
+      // Update the full session data, not just the status
+      // This ensures token counts and other fields are preserved
+      if (session) {
+        updateSession(session_id, {
+          ...session,
+          status: nextStatus,
+        })
+      } else {
+        // Fallback to just updating status if we couldn't fetch the session
+        updateSessionStatus(session_id, nextStatus)
+      }
+
       await refreshActiveSessionConversation(session_id)
     },
-    onNewApproval: async data => {
-      console.log('useSessionSubscriptions.onNewApproval', data)
-      updateSessionStatus(data.session_id, SessionStatus.WaitingInput)
-      await refreshActiveSessionConversation(data.session_id)
+    onNewApproval: async (data: NewApprovalEventData) => {
+      logger.log('useSessionSubscriptions.onNewApproval', Date.now(), data)
+      const { approval_id: approvalId, session_id: sessionId, tool_name: toolName } = data
+
+      if (!approvalId || !sessionId) {
+        logger.error('Invalid approval event data:', data)
+        return
+      }
+
+      const notificationId = `approval_required:${sessionId}:${approvalId}`
+      if (isItemNotified(notificationId)) {
+        return
+      }
+
+      // Wait a brief moment to see if an approval_resolved event follows immediately
+      // This handles auto-approved cases where both events fire in quick succession
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // // Check if this approval was already resolved (auto-approved)
+      if (isRecentResolvedApproval(approvalId)) {
+        console.log('Skipping notification for auto-approved item', { sessionId, approvalId })
+        return
+      }
+
+      // Format tool name if it's an MCP tool
+      const displayToolName = toolName.startsWith('mcp__') ? formatMcpToolName(toolName) : toolName
+
+      try {
+        const sessionState = await daemonClient.getSessionState(sessionId)
+        const model = sessionState.session?.model || 'AI Agent'
+
+        await notificationService.notifyApprovalRequired(
+          sessionId,
+          approvalId,
+          `${displayToolName} approval required`,
+          model,
+        )
+        addNotifiedItem(notificationId)
+      } catch (error) {
+        logger.error(`Failed to get session state for ${sessionId}:`, error)
+        // Still show notification with limited info
+        await notificationService.notifyApprovalRequired(
+          sessionId,
+          approvalId,
+          `${displayToolName} approval required`,
+          'AI Agent',
+        )
+        addNotifiedItem(notificationId)
+      }
+
+      updateSessionStatus(sessionId, SessionStatus.WaitingInput)
+      await refreshActiveSessionConversation(sessionId)
     },
-    onApprovalResolved: async data => {
-      console.log('useSessionSubscriptions.onApprovalResolved', data)
+    onApprovalResolved: async (data: ApprovalResolvedEventData) => {
+      logger.log('useSessionSubscriptions.onApprovalResolved', Date.now(), data)
+      addRecentResolvedApprovalToCache(data.approval_id)
       updateSessionStatus(data.session_id, SessionStatus.Running)
       await refreshActiveSessionConversation(data.session_id)
+      notificationService.clearNotificationByApprovalId(data.approval_id)
+    },
+    // CODEREVIEW: Why did this previously exist? Sundeep wants to talk about this do not merge.
+    onSessionSettingsChanged: async (data: SessionSettingsChangedEventData) => {
+      logger.log('useSessionSubscriptions.onSessionSettingsChanged', data)
+
+      // Check if this is an expiry event from the server
+      if (
+        data.reason === SessionSettingsChangeReason.EXPIRED &&
+        data.dangerously_skip_permissions === false
+      ) {
+        logger.debug('Server disabled expired dangerous skip permissions', {
+          sessionId: data.session_id,
+          expiredAt: data.expired_at,
+        })
+      }
+
+      const updates: Record<string, any> = {}
+
+      if (data.auto_accept_edits !== undefined) {
+        updates.autoAcceptEdits = data.auto_accept_edits
+      }
+
+      if (data.dangerously_skip_permissions !== undefined) {
+        updates.dangerouslySkipPermissions = data.dangerously_skip_permissions
+
+        // Calculate expiry time if timeout provided
+        if (data.dangerously_skip_permissions && data.dangerously_skip_permissions_timeout_ms) {
+          const expiresAt = new Date(Date.now() + data.dangerously_skip_permissions_timeout_ms)
+          updates.dangerouslySkipPermissionsExpiresAt = expiresAt
+        } else if (!data.dangerously_skip_permissions) {
+          updates.dangerouslySkipPermissionsExpiresAt = undefined
+        }
+      }
+
+      updateSession(data.session_id, updates)
+
+      // Show notification
+      if (notificationService) {
+        const title = data.dangerously_skip_permissions
+          ? 'Bypassing permissions enabled'
+          : data.auto_accept_edits
+            ? 'Auto-accept edits enabled'
+            : 'Auto-accept disabled'
+
+        notificationService.notify({
+          type: 'settings_changed',
+          title,
+          body: data.dangerously_skip_permissions
+            ? 'ALL tools will be automatically approved'
+            : data.auto_accept_edits
+              ? 'Edit, Write, and MultiEdit tools will be automatically approved'
+              : 'All tools require manual approval',
+          metadata: { sessionId: data.session_id },
+        })
+      }
     },
   })
 
@@ -82,9 +321,23 @@ export function Layout() {
         'https://github.com/humanlayer/humanlayer/issues/new?title=Feedback%20on%20CodeLayer&body=%23%23%23%20Problem%20to%20solve%20%2F%20Expected%20Behavior%0A%0A%0A%23%23%23%20Proposed%20solution',
       )
     } catch (error) {
-      console.error('Failed to open feedback URL:', error)
+      logger.error('Failed to open feedback URL:', error)
     }
   })
+
+  // Prevent escape key from exiting full screen
+  // Might be worth guarding this specifically in macOS
+  // down-the-road
+  useHotkeys(
+    'escape',
+    () => {
+      // console.log('escape!', ev);
+    },
+    {
+      enableOnFormTags: true,
+      preventDefault: !isOpen,
+    },
+  )
 
   // Load sessions when connected
   useEffect(() => {
@@ -123,11 +376,69 @@ export function Layout() {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
+  // Notify about log location on startup (production only)
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      notifyLogLocation()
+    }
+  }, [])
+
+  // Register global shortcut as backup (Rust is primary)
+  useEffect(() => {
+    register('CommandOrControl+Shift+H', async event => {
+      if (event.state === 'Pressed') {
+        await invoke('show_quick_launcher')
+      }
+    }).catch(error => {
+      logger.debug('Global shortcut registration handled by Rust:', error)
+    })
+  }, [])
+
+  // Listen for events from quick launcher window
+  useEffect(() => {
+    const handleSessionCreated = async (payload: { sessionId: string }) => {
+      const { sessionId } = payload
+      if (sessionId) {
+        // Navigate to the new session silently
+        navigate(`/sessions/${sessionId}`)
+
+        // Do NOT focus the window - let it happen in background
+        // User will switch to the app when they're ready
+      }
+    }
+
+    // Set up the listener for cross-window communication
+    let unlistenPromise: Promise<() => void> | null = null
+
+    const setupListener = async () => {
+      const unlisten = await listen('session-created', event => {
+        handleSessionCreated(event.payload as { sessionId: string })
+      })
+      return unlisten
+    }
+
+    unlistenPromise = setupListener()
+
+    return () => {
+      if (unlistenPromise) {
+        unlistenPromise.then(unlisten => unlisten())
+      }
+    }
+  }, [navigate])
+
+  useEffect(() => {
+    if (location.state?.continuationSession) {
+      const session = location.state.continuationSession.session
+      const conversation = location.state.continuationConversation || []
+      setActiveSessionDetail(session.id, session, conversation)
+    }
+  }, [location.state?.continuationSession])
+
   const loadSessions = async () => {
     try {
       await useStore.getState().refreshSessions()
     } catch (error) {
-      console.error('Failed to load sessions:', error)
+      logger.error('Failed to load sessions:', error)
     }
   }
 
@@ -135,7 +446,7 @@ export function Layout() {
     try {
       // Handle new approval format directly
       if (!approval || !approval.id) {
-        console.error('Invalid approval data:', approval)
+        logger.error('Invalid approval data:', approval)
         return
       }
 
@@ -159,9 +470,6 @@ export function Layout() {
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
-      {/* Header */}
-      <div className="border-b border-border"></div>
-
       {/* Main content */}
       <main className="flex-1 flex flex-col p-4 overflow-hidden">
         {connected && (
@@ -237,10 +545,57 @@ export function Layout() {
               </a>
             </TooltipTrigger>
             <TooltipContent>
-              <p>Submit feedback (⌘⇧F)</p>
+              <p className="flex items-center gap-1">
+                Submit feedback <KeyboardShortcut keyString="⌘+⇧+F" />
+              </p>
             </TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setHotkeyPanelOpen(true)}
+                className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-mono border border-border bg-background text-foreground hover:bg-accent/10 transition-colors"
+              >
+                <HelpCircle className="w-3 h-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="flex items-center gap-1">
+                View all keyboard shortcuts <KeyboardShortcut keyString="?" />
+              </p>
+            </TooltipContent>
+          </Tooltip>
+          {import.meta.env.DEV && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setIsDebugPanelOpen(true)}
+                  className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-mono border border-border bg-background text-foreground hover:bg-accent/10 transition-colors"
+                >
+                  <Bug className="w-3 h-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Debug Panel (Dev Only)</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
           <ThemeSelector />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setSettingsDialogOpen(true)}
+                className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-mono border border-border bg-background text-foreground hover:bg-accent/10 transition-colors"
+              >
+                <Settings className="w-3 h-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="flex items-center gap-1">
+                Settings <KeyboardShortcut keyString="⌘+shift+s" />
+              </div>
+            </TooltipContent>
+          </Tooltip>
           <div className="flex items-center gap-2 font-mono text-xs">
             <span className="uppercase tracking-wider">
               {connecting && 'CONNECTING...'}
@@ -264,6 +619,18 @@ export function Layout() {
 
       {/* Notifications */}
       <Toaster position="bottom-right" richColors />
+
+      {/* Debug Panel */}
+      <DebugPanel open={isDebugPanelOpen} onOpenChange={setIsDebugPanelOpen} />
+
+      {/* Settings Dialog */}
+      <SettingsDialog open={isSettingsDialogOpen} onOpenChange={setSettingsDialogOpen} />
+
+      {/* Global Dangerous Skip Permissions Monitor */}
+      <DangerousSkipPermissionsMonitor />
+
+      {/* DVD Screensaver */}
+      <DvdScreensaver />
     </div>
   )
 }

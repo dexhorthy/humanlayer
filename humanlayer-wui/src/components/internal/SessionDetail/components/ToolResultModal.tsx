@@ -2,11 +2,12 @@ import React from 'react'
 import { useHotkeys } from 'react-hotkeys-hook'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ConversationEvent } from '@/lib/daemon/types'
-import { truncate } from '@/utils/formatting'
+import { truncate, parseMcpToolName } from '@/utils/formatting'
 import { useStealHotkeyScope } from '@/hooks/useStealHotkeyScope'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { getToolIcon } from '../eventToDisplayObject'
 import { CustomDiffViewer } from './CustomDiffViewer'
+import { AnsiText, hasAnsiCodes } from '@/utils/ansiParser'
 
 // TODO(3): Add keyboard navigation hints in the UI
 // TODO(2): Consider adding copy-to-clipboard functionality for tool results
@@ -23,6 +24,25 @@ export function ToolResultModal({
   toolResult: ConversationEvent | null
   onClose: () => void
 }) {
+  // Store the focused element when modal opens
+  const previousFocusRef = React.useRef<HTMLElement | null>(null)
+
+  React.useEffect(() => {
+    if (toolResult || toolCall) {
+      previousFocusRef.current = document.activeElement as HTMLElement
+    }
+  }, [toolResult, toolCall])
+
+  // Create a unified close handler that preserves focus
+  const handleClose = React.useCallback(() => {
+    onClose()
+    // Restore focus after a microtask to avoid race conditions
+    setTimeout(() => {
+      if (previousFocusRef.current && previousFocusRef.current.focus) {
+        previousFocusRef.current.focus()
+      }
+    }, 0)
+  }, [onClose])
   // Handle j/k and arrow key navigation - using priority to override background hotkeys
   useHotkeys(
     'j,down',
@@ -66,31 +86,47 @@ export function ToolResultModal({
     },
   )
 
-  // Handle escape to close
+  // Consolidated escape and 'i' key handler
   useHotkeys(
-    'escape',
+    'escape, i', // Handle both keys with single declaration
     ev => {
+      ev.preventDefault()
       ev.stopPropagation()
-      if (toolResult) {
-        onClose()
+      ev.stopImmediatePropagation() // Complete isolation
+      if (toolResult || toolCall) {
+        handleClose() // Use the unified close handler
       }
     },
-    { enabled: !!toolResult, scopes: ToolResultModalHotkeysScope },
+    {
+      enabled: !!(toolResult || toolCall),
+      scopes: ToolResultModalHotkeysScope,
+      preventDefault: true,
+    },
   )
 
-  useStealHotkeyScope(ToolResultModalHotkeysScope)
+  const isOpen = !!(toolResult || toolCall)
+  useStealHotkeyScope(ToolResultModalHotkeysScope, isOpen)
 
   // Show modal if we have either a tool result or just a tool call (unfinished)
-  if (!toolResult && !toolCall) return null
+  if (!isOpen) return null
 
   return (
     <Dialog
       open={!!(toolResult || toolCall)}
       onOpenChange={open => {
-        !open && onClose()
+        // This handles ALL dialog close triggers including click-outside
+        if (!open) {
+          handleClose() // Use unified close handler
+        }
       }}
     >
-      <DialogContent className="w-[90vw] max-w-[90vw] h-[85vh] p-0 sm:max-w-[90vw] flex flex-col overflow-hidden">
+      <DialogContent
+        className="w-[90vw] max-w-[90vw] h-[85vh] p-0 sm:max-w-[90vw] flex flex-col overflow-hidden"
+        onEscapeKeyDown={e => {
+          // Prevent the default Dialog escape handling (we handle it ourselves)
+          e.preventDefault()
+        }}
+      >
         <DialogHeader className="px-4 py-3 border-b bg-background flex-none">
           <DialogTitle className="text-sm font-mono">
             <div className="flex items-center gap-2">
@@ -114,19 +150,21 @@ export function ToolResultModal({
           <ScrollArea className="h-full">
             <div className="px-4 py-4 space-y-4">
               {/* Tool Input Section */}
-              {toolCall?.toolInputJson && (
-                <div>
-                  <h3 className="text-sm font-medium text-muted-foreground mb-2">Input</h3>
-                  {renderToolInput(toolCall)}
-                </div>
-              )}
+              {toolCall?.toolInputJson && renderToolInput(toolCall)}
 
               {/* Tool Result Section - only show if we have a result */}
               {toolResult && (
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground mb-2">Result</h3>
                   <pre className="font-mono text-sm whitespace-pre-wrap break-words">
-                    {toolResult.toolResultContent || 'No content'}
+                    {/* Only apply ANSI parsing to Bash tool output */}
+                    {toolCall?.toolName === 'Bash' &&
+                    typeof toolResult.toolResultContent === 'string' &&
+                    hasAnsiCodes(toolResult.toolResultContent) ? (
+                      <AnsiText content={toolResult.toolResultContent} />
+                    ) : (
+                      toolResult.toolResultContent || 'No content'
+                    )}
                   </pre>
                 </div>
               )}
@@ -139,7 +177,7 @@ export function ToolResultModal({
             <kbd>j/k</kbd> or <kbd>↓/↑</kbd> to scroll
           </span>
           <span className="text-xs text-muted-foreground">
-            <kbd>ESC</kbd> to close
+            <kbd>i</kbd> or <kbd>ESC</kbd> to close
           </span>
         </div>
       </DialogContent>
@@ -175,6 +213,11 @@ function getToolPrimaryParam(toolCall: ConversationEvent): string {
       return args.file_path
     } else if (toolCall.toolName === 'Grep' && args.pattern) {
       return args.pattern
+    } else if (toolCall.toolName === 'ExitPlanMode' && args.plan) {
+      const firstLine = args.plan.split('\n')[0].trim()
+      return truncate(firstLine, 60)
+    } else if (toolCall.toolName === 'WebFetch' && args.url) {
+      return truncate(args.url, 60)
     }
 
     // For other tools, show the first string value
@@ -193,9 +236,7 @@ function renderToolInput(toolCall: ConversationEvent): React.ReactNode {
 
     // Special rendering for MCP tools
     if (toolCall.toolName?.startsWith('mcp__')) {
-      const parts = toolCall.toolName.split('__')
-      const service = parts[1] || 'unknown'
-      const method = parts.slice(2).join('__') || 'unknown'
+      const { service, method } = parseMcpToolName(toolCall.toolName)
 
       return (
         <div className="space-y-2">
@@ -274,6 +315,38 @@ function renderToolInput(toolCall: ConversationEvent): React.ReactNode {
           <div className="mt-2">
             <CustomDiffViewer edits={allEdits} splitView={false} />
           </div>
+        </div>
+      )
+    }
+
+    // Special rendering for ExitPlanMode tool
+    if (toolCall.toolName === 'ExitPlanMode') {
+      return (
+        <div className="space-y-2">
+          <div className="font-mono text-sm">
+            <span className="text-muted-foreground">Plan:</span>
+            <pre className="mt-1 whitespace-pre-wrap bg-muted/50 rounded-md p-3 break-words">
+              {args.plan}
+            </pre>
+          </div>
+        </div>
+      )
+    }
+
+    // Special rendering for WebFetch tool
+    if (toolCall.toolName === 'WebFetch') {
+      return (
+        <div className="space-y-2">
+          <div className="font-mono text-sm">
+            <span className="text-muted-foreground">URL:</span>{' '}
+            <span className="font-bold">{args.url}</span>
+          </div>
+          {args.prompt && (
+            <div className="font-mono text-sm">
+              <span className="text-muted-foreground">Prompt:</span>{' '}
+              <span className="italic">{args.prompt}</span>
+            </div>
+          )}
         </div>
       )
     }

@@ -2,6 +2,8 @@ import type { Session, Approval } from '@/lib/daemon/types'
 import { SessionStatus } from '@/lib/daemon/types'
 import { create, StoreApi } from 'zustand'
 import { daemonClient } from '@/lib/daemon'
+import { logger } from '@/lib/logging'
+import { Editor } from '@tiptap/react'
 
 export interface AppState {
   /* Sessions */
@@ -18,6 +20,7 @@ export interface AppState {
 
   /* UI State */
   isLoading: boolean
+  responseEditor: Editor | null
 
   /* Notifications */
   notifiedItems: Set<string>
@@ -38,6 +41,10 @@ export interface AppState {
   updateActiveSessionConversation: (conversation: any[]) => void
   clearActiveSessionDetail: () => void
   fetchActiveSessionDetail: (sessionId: string) => Promise<void>
+
+  /* Response Editor */
+  setResponseEditor: (responseEditor: Editor) => void
+  removeResponseEditor: () => void
 
   /* Approval Actions */
   setApprovals: (approvals: Approval[]) => void
@@ -65,6 +72,7 @@ export function createRealAppStore(): StoreApi<AppState> {
     activeSessionDetail: null,
     approvals: [],
     isLoading: false,
+    responseEditor: null,
     notifiedItems: new Set<string>(),
 
     // Session Actions
@@ -110,7 +118,7 @@ export function createRealAppStore(): StoreApi<AppState> {
         const response = await daemonClient.getSessionLeaves()
         set({ sessions: response.sessions })
       } catch (error) {
-        console.error('Failed to refresh sessions:', error)
+        logger.error('Failed to refresh sessions:', error)
       }
     },
     setFocusedSession: (session: Session | null) => set({ focusedSession: session }),
@@ -149,7 +157,7 @@ export function createRealAppStore(): StoreApi<AppState> {
         await daemonClient.interruptSession(sessionId)
         // The session status will be updated via the subscription
       } catch (error) {
-        console.error('Failed to interrupt session:', error)
+        logger.error('Failed to interrupt session:', error)
       }
     },
 
@@ -193,7 +201,7 @@ export function createRealAppStore(): StoreApi<AppState> {
           activeSessionId: sessionId,
         })
       } catch (error) {
-        console.error('Failed to fetch session detail:', error)
+        logger.error('Failed to fetch session detail:', error)
         throw error
       }
     },
@@ -240,6 +248,9 @@ export function createRealAppStore(): StoreApi<AppState> {
     // UI Actions
     setLoading: (isLoading: boolean) => set({ isLoading }),
     setActiveSessionId: (sessionId: string | null) => set({ activeSessionId: sessionId }),
+
+    setResponseEditor: (responseEditor: Editor) => set({ responseEditor }),
+    removeResponseEditor: () => set({ responseEditor: null }),
   }))
 }
 
@@ -253,6 +264,7 @@ export function createDemoAppStore(): StoreApi<AppState> {
     activeSessionDetail: null,
     approvals: [],
     isLoading: false,
+    responseEditor: null,
     notifiedItems: new Set<string>(),
 
     // No-op actions
@@ -286,5 +298,7 @@ export function createDemoAppStore(): StoreApi<AppState> {
     // No-op UI actions
     setLoading: () => {},
     setActiveSessionId: () => {},
+    setResponseEditor: () => {},
+    removeResponseEditor: () => {},
   }))
 }

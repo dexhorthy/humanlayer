@@ -3,13 +3,17 @@ import {
     SessionsApi,
     ApprovalsApi,
     SystemApi,
+    SettingsApi,
     CreateSessionRequest,
     Session,
     Approval,
     CreateSessionResponse,
     CreateSessionResponseData,
     EventFromJSON,
-    RecentPath
+    RecentPath,
+    ListSessionsRequest,
+    UserSettingsResponse,
+    UpdateUserSettingsRequest
 } from './generated';
 
 export interface HLDClientOptions {
@@ -34,6 +38,7 @@ interface EventSourceLike {
 export class HLDClient {
     private sessionsApi: SessionsApi;
     private approvalsApi: ApprovalsApi;
+    private settingsApi: SettingsApi;
     private baseUrl: string;
     private headers?: Record<string, string>;
     private sseConnections: Map<string, EventSourceLike> = new Map();
@@ -49,6 +54,7 @@ export class HLDClient {
 
         this.sessionsApi = new SessionsApi(config);
         this.approvalsApi = new ApprovalsApi(config);
+        this.settingsApi = new SettingsApi(config);
     }
 
     // Session Management
@@ -57,7 +63,7 @@ export class HLDClient {
         return response.data;
     }
 
-    async listSessions(params?: { leafOnly?: boolean; includeArchived?: boolean }): Promise<Session[]> {
+    async listSessions(params?: ListSessionsRequest): Promise<Session[]> {
         const response = await this.sessionsApi.listSessions(params);
         return response.data;
     }
@@ -105,13 +111,58 @@ export class HLDClient {
     }
 
     // Update session settings
-    async updateSession(id: string, updates: { auto_accept_edits?: boolean, title?: string }): Promise<void> {
+    async updateSession(id: string, updates: {
+        auto_accept_edits?: boolean,
+        title?: string,
+        dangerouslySkipPermissions?: boolean,
+        dangerouslySkipPermissionsTimeoutMs?: number,
+        model?: string,
+        modelId?: string,
+        proxyEnabled?: boolean,
+        proxyBaseUrl?: string,
+        proxyModelOverride?: string,
+        proxyApiKey?: string,
+        archived?: boolean
+    }): Promise<void> {
+        // Build request with only defined fields to avoid sending undefined values
+        const updateSessionRequest: any = {};
+        if (updates.auto_accept_edits !== undefined) {
+            updateSessionRequest.autoAcceptEdits = updates.auto_accept_edits;
+        }
+        if (updates.title !== undefined) {
+            updateSessionRequest.title = updates.title;
+        }
+        if (updates.dangerouslySkipPermissions !== undefined) {
+            updateSessionRequest.dangerouslySkipPermissions = updates.dangerouslySkipPermissions;
+        }
+        if (updates.dangerouslySkipPermissionsTimeoutMs !== undefined) {
+            updateSessionRequest.dangerouslySkipPermissionsTimeoutMs = updates.dangerouslySkipPermissionsTimeoutMs;
+        }
+        if (updates.model !== undefined) {
+            updateSessionRequest.model = updates.model;
+        }
+        if (updates.modelId !== undefined) {
+            updateSessionRequest.modelId = updates.modelId;
+        }
+        if (updates.proxyEnabled !== undefined) {
+            updateSessionRequest.proxyEnabled = updates.proxyEnabled;
+        }
+        if (updates.proxyBaseUrl !== undefined) {
+            updateSessionRequest.proxyBaseUrl = updates.proxyBaseUrl;
+        }
+        if (updates.proxyModelOverride !== undefined) {
+            updateSessionRequest.proxyModelOverride = updates.proxyModelOverride;
+        }
+        if (updates.proxyApiKey !== undefined) {
+            updateSessionRequest.proxyApiKey = updates.proxyApiKey;
+        }
+        if (updates.archived !== undefined) {
+            updateSessionRequest.archived = updates.archived;
+        }
+
         await this.sessionsApi.updateSession({
             id,
-            updateSessionRequest: {
-                autoAcceptEdits: updates.auto_accept_edits,
-                title: updates.title
-            }
+            updateSessionRequest
         });
     }
 
@@ -148,6 +199,15 @@ export class HLDClient {
         }));
         const response = await systemApi.getHealth();
         return response;
+    }
+
+    // User Settings
+    async getUserSettings(): Promise<UserSettingsResponse> {
+        return await this.settingsApi.getUserSettings();
+    }
+
+    async updateUserSettings(request: UpdateUserSettingsRequest): Promise<UserSettingsResponse> {
+        return await this.settingsApi.updateUserSettings({ updateUserSettingsRequest: request });
     }
 
     // Server-Sent Events using eventsource polyfill

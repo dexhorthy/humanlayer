@@ -5,12 +5,17 @@ import { useHotkeysContext } from 'react-hotkeys-hook'
 import { SessionTableHotkeysScope } from '@/components/internal/SessionTable'
 import { exists } from '@tauri-apps/plugin-fs'
 import { homeDir } from '@tauri-apps/api/path'
+import { logger } from '@/lib/logging'
 
 interface SessionConfig {
-  query: string
+  title?: string
   workingDir: string
+  provider?: 'anthropic' | 'openrouter' | 'baseten'
   model?: string
   maxTurns?: number
+  openRouterApiKey?: string
+  basetenApiKey?: string
+  additionalDirectories?: string[]
 }
 
 interface LauncherState {
@@ -38,14 +43,49 @@ interface LauncherState {
   reset: () => void
 }
 
+const isViewingSessionDetail = (): boolean => {
+  const hash = window.location.hash
+  return /^#\/sessions\/[^/]+$/.test(hash)
+}
+
 const LAST_WORKING_DIR_KEY = 'humanlayer-last-working-dir'
+const SESSION_LAUNCHER_QUERY_KEY = 'session-launcher-query'
+const OPENROUTER_API_KEY = 'humanlayer-openrouter-api-key'
+const BASETEN_API_KEY = 'humanlayer-baseten-api-key'
+
+// Helper function to get default working directory
+const getDefaultWorkingDir = (): string => {
+  const stored = localStorage.getItem(LAST_WORKING_DIR_KEY)
+  return stored || '~/' // Default to home directory on first launch
+}
+
+// Helper function to get saved query
+const getSavedQuery = (): string => {
+  return localStorage.getItem(SESSION_LAUNCHER_QUERY_KEY) || ''
+}
+
+// Helper function to get saved OpenRouter API key
+const getSavedOpenRouterKey = (): string | undefined => {
+  return localStorage.getItem(OPENROUTER_API_KEY) || undefined
+}
+
+// Helper function to get saved Baseten API key
+const getSavedBasetenKey = (): string | undefined => {
+  return localStorage.getItem(BASETEN_API_KEY) || undefined
+}
 
 export const useSessionLauncher = create<LauncherState>((set, get) => ({
   isOpen: false,
   mode: 'command',
   view: 'menu',
-  query: '',
-  config: { query: '', workingDir: localStorage.getItem(LAST_WORKING_DIR_KEY) || '' },
+  query: getSavedQuery(),
+  config: {
+    workingDir: getDefaultWorkingDir(),
+    provider: 'anthropic',
+    openRouterApiKey: getSavedOpenRouterKey(),
+    basetenApiKey: getSavedBasetenKey(),
+    additionalDirectories: [],
+  },
   isLaunching: false,
   gPrefixMode: false,
   selectedMenuIndex: 0,
@@ -60,25 +100,58 @@ export const useSessionLauncher = create<LauncherState>((set, get) => ({
     }),
 
   close: () => {
+    const savedQuery = getSavedQuery()
     set({
       isOpen: false,
       view: 'menu',
-      query: '',
-      config: { query: '', workingDir: localStorage.getItem(LAST_WORKING_DIR_KEY) || '' },
+      query: savedQuery,
+      config: {
+        workingDir: getDefaultWorkingDir(),
+        provider: 'anthropic',
+        openRouterApiKey: getSavedOpenRouterKey(),
+        basetenApiKey: getSavedBasetenKey(),
+        additionalDirectories: [],
+      },
       selectedMenuIndex: 0,
       error: undefined,
       gPrefixMode: false,
     })
   },
 
-  setQuery: query =>
-    set(state => ({
+  setQuery: query => {
+    // Save to localStorage on every change
+    localStorage.setItem(SESSION_LAUNCHER_QUERY_KEY, query)
+    return set({
       query,
-      config: { ...state.config, query },
       error: undefined,
-    })),
+    })
+  },
 
-  setConfig: config => set({ config, error: undefined }),
+  setConfig: config => {
+    // Save or remove OpenRouter API key from localStorage
+    if (config.openRouterApiKey) {
+      localStorage.setItem(OPENROUTER_API_KEY, config.openRouterApiKey)
+    } else if (
+      config.openRouterApiKey === undefined ||
+      config.openRouterApiKey === null ||
+      config.openRouterApiKey === ''
+    ) {
+      // Remove from localStorage when cleared to avoid stale state
+      localStorage.removeItem(OPENROUTER_API_KEY)
+    }
+    // Save or remove Baseten API key from localStorage
+    if (config.basetenApiKey) {
+      localStorage.setItem(BASETEN_API_KEY, config.basetenApiKey)
+    } else if (
+      config.basetenApiKey === undefined ||
+      config.basetenApiKey === null ||
+      config.basetenApiKey === ''
+    ) {
+      // Remove from localStorage when cleared to avoid stale state
+      localStorage.removeItem(BASETEN_API_KEY)
+    }
+    return set({ config, error: undefined })
+  },
 
   setGPrefixMode: enabled => set({ gPrefixMode: enabled }),
 
@@ -119,23 +192,35 @@ export const useSessionLauncher = create<LauncherState>((set, get) => ({
     try {
       set({ isLaunching: true, error: undefined })
 
-      // Build MCP config (approvals enabled by default)
-      const mcpConfig = {
-        mcpServers: {
-          approvals: {
-            command: 'npx',
-            args: ['humanlayer', 'mcp', 'claude_approvals'],
-          },
-        },
-      }
+      // MCP config is now injected by daemon
 
       const request: LaunchSessionRequest = {
         query: query.trim(),
+        title: config.title || undefined,
         working_dir: config.workingDir || undefined,
+        provider: config.provider || 'anthropic',
         model: config.model || undefined,
         max_turns: config.maxTurns || undefined,
-        mcp_config: mcpConfig,
-        permission_prompt_tool: 'mcp__approvals__request_permission',
+        // MCP config is now injected by daemon
+        permission_prompt_tool: 'mcp__codelayer__request_permission',
+        // Add OpenRouter proxy configuration if provider is openrouter
+        ...(config.provider === 'openrouter' && config.openRouterApiKey
+          ? {
+              proxy_enabled: true,
+              proxy_base_url: 'https://openrouter.ai/api/v1',
+              proxy_model_override: config.model || 'openai/gpt-4o-mini',
+              proxy_api_key: config.openRouterApiKey,
+            }
+          : {}),
+        // Add Baseten proxy configuration if provider is baseten
+        ...(config.provider === 'baseten' && config.basetenApiKey
+          ? {
+              proxy_enabled: true,
+              proxy_base_url: 'https://inference.baseten.co/v1',
+              proxy_model_override: config.model || 'deepseek-ai/DeepSeek-V3.1',
+              proxy_api_key: config.basetenApiKey,
+            }
+          : {}),
       }
 
       const response = await daemonClient.launchSession(request)
@@ -144,6 +229,9 @@ export const useSessionLauncher = create<LauncherState>((set, get) => ({
       if (config.workingDir) {
         localStorage.setItem(LAST_WORKING_DIR_KEY, config.workingDir)
       }
+
+      // Clear the saved query after successful launch
+      localStorage.removeItem(SESSION_LAUNCHER_QUERY_KEY)
 
       // Navigate to new session (will be handled by parent component)
       window.location.hash = `#/sessions/${response.sessionId}`
@@ -164,11 +252,18 @@ export const useSessionLauncher = create<LauncherState>((set, get) => ({
   },
 
   createNewSession: () => {
+    const savedQuery = getSavedQuery()
     // Switch to input mode for session creation
     set({
       view: 'input',
-      query: '',
-      config: { query: '', workingDir: localStorage.getItem(LAST_WORKING_DIR_KEY) || '' },
+      query: savedQuery,
+      config: {
+        workingDir: getDefaultWorkingDir(),
+        provider: 'anthropic',
+        openRouterApiKey: getSavedOpenRouterKey(),
+        basetenApiKey: getSavedBasetenKey(),
+        additionalDirectories: [],
+      },
       error: undefined,
     })
   },
@@ -179,19 +274,30 @@ export const useSessionLauncher = create<LauncherState>((set, get) => ({
     get().close()
   },
 
-  reset: () =>
-    set({
+  reset: () => {
+    const savedQuery = getSavedQuery()
+    return set({
       isOpen: false,
       mode: 'command',
       view: 'menu',
-      query: '',
-      config: { query: '', workingDir: localStorage.getItem(LAST_WORKING_DIR_KEY) || '' },
+      query: savedQuery,
+      config: {
+        workingDir: getDefaultWorkingDir(),
+        provider: 'anthropic',
+        openRouterApiKey: getSavedOpenRouterKey(),
+        basetenApiKey: getSavedBasetenKey(),
+        additionalDirectories: [],
+      },
       selectedMenuIndex: 0,
       isLaunching: false,
       error: undefined,
       gPrefixMode: false,
-    }),
+    })
+  },
 }))
+
+// Export helper function
+export { isViewingSessionDetail }
 
 // Helper hook for global hotkey management
 export function useSessionLauncherHotkeys() {
@@ -212,6 +318,19 @@ export function useSessionLauncherHotkeys() {
     )
   }
 
+  // Check if a modal scope is active (indicating a modal is open)
+  const isModalScopeActive = () => {
+    // Only check for specific modals that should block global hotkeys
+    // Don't include all modals - for example, we want 'c' to work in SessionDetail
+    return activeScopes.some(
+      scope =>
+        scope === 'tool-result-modal' || // Tool result modal (opened with 'i')
+        scope === 'session-launcher' || // Session launcher itself
+        scope === 'fork-view-modal' || // Fork view modal
+        scope === 'dangerously-skip-permissions-dialog', // Permissions dialog
+    )
+  }
+
   return {
     handleKeyDown: (e: KeyboardEvent) => {
       // Cmd+K - Global command palette (shows menu)
@@ -226,14 +345,17 @@ export function useSessionLauncherHotkeys() {
       }
 
       // C - Create new session directly (bypasses command palette)
+      // Don't trigger if a modal is already open
       if (e.key === 'c' && !e.metaKey && !e.ctrlKey && !isTypingInInput()) {
-        e.preventDefault()
-        // Open launcher if not already open
-        if (!isOpen) {
-          open('command')
+        if (!isModalScopeActive()) {
+          e.preventDefault()
+          // Open launcher if not already open
+          if (!isOpen) {
+            open('command')
+          }
+          createNewSession()
+          return
         }
-        createNewSession()
-        return
       }
 
       // / - Search sessions and approvals (only when not typing)
@@ -244,7 +366,8 @@ export function useSessionLauncherHotkeys() {
         !e.metaKey &&
         !e.ctrlKey &&
         !isTypingInInput() &&
-        !activeScopes.includes(SessionTableHotkeysScope)
+        !activeScopes.includes(SessionTableHotkeysScope) &&
+        !isModalScopeActive()
       ) {
         e.preventDefault()
         open('search')
@@ -252,7 +375,7 @@ export function useSessionLauncherHotkeys() {
       }
 
       // G prefix navigation (prepare for Phase 2)
-      if (e.key === 'g' && !e.metaKey && !e.ctrlKey && !isTypingInInput()) {
+      if (e.key === 'g' && !e.metaKey && !e.ctrlKey && !isTypingInInput() && !isModalScopeActive()) {
         e.preventDefault()
         setGPrefixMode(true)
         setTimeout(() => setGPrefixMode(false), 2000)
@@ -264,7 +387,7 @@ export function useSessionLauncherHotkeys() {
         e.preventDefault()
         setGPrefixMode(false)
         // TODO: Navigate to approvals view
-        console.log('Navigate to approvals (Phase 2)')
+        logger.log('Navigate to approvals (Phase 2)')
         return
       }
 

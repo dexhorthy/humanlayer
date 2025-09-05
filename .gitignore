@@ -198,3 +198,4 @@ claude-api-logs/
 /tmp/claude-proxy.log
 /tmp/claude-openai-proxy.log
 proxy.log
+hlyr/*.bun-build

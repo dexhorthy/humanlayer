@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	claudecode "github.com/humanlayer/humanlayer/claudecode-go"
 	"github.com/humanlayer/humanlayer/hld/bus"
+	hldconfig "github.com/humanlayer/humanlayer/hld/config"
 	"github.com/humanlayer/humanlayer/hld/store"
 )
 
@@ -27,6 +28,7 @@ type Manager struct {
 	approvalReconciler ApprovalReconciler
 	pendingQueries     sync.Map // map[sessionID]query - stores queries waiting for Claude session ID
 	socketPath         string   // Daemon socket path for MCP servers
+	httpPort           int      // HTTP server port for proxy endpoint
 }
 
 // Compile-time check that Manager implements SessionManager
@@ -59,43 +61,92 @@ func (m *Manager) SetApprovalReconciler(reconciler ApprovalReconciler) {
 	m.approvalReconciler = reconciler
 }
 
+// SetHTTPPort sets the HTTP port for the proxy endpoint
+func (m *Manager) SetHTTPPort(port int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.httpPort = port
+	slog.Debug("HTTP port set for proxy endpoint", "port", port)
+}
+
 // LaunchSession starts a new Claude Code session
-func (m *Manager) LaunchSession(ctx context.Context, config claudecode.SessionConfig) (*Session, error) {
+func (m *Manager) LaunchSession(ctx context.Context, config LaunchSessionConfig) (*Session, error) {
 	// Generate unique IDs
 	sessionID := uuid.New().String()
 	runID := uuid.New().String()
 
+	// Extract the Claude config (without daemon-level settings)
+	claudeConfig := config.SessionConfig
+
+	// Inject daemon's CodeLayer MCP server configuration
+	if claudeConfig.MCPConfig == nil {
+		claudeConfig.MCPConfig = &claudecode.MCPConfig{
+			MCPServers: make(map[string]claudecode.MCPServer),
+		}
+	}
+
+	// Always inject codelayer MCP server (overwrite if exists)
+	claudeConfig.MCPConfig.MCPServers["codelayer"] = claudecode.MCPServer{
+		Command: hldconfig.DefaultCLICommand,
+		Args:    []string{"mcp", "claude_approvals"},
+		Env: map[string]string{
+			"HUMANLAYER_SESSION_ID":    sessionID,
+			"HUMANLAYER_DAEMON_SOCKET": m.socketPath,
+		},
+	}
+	slog.Debug("injected codelayer MCP server",
+		"session_id", sessionID,
+		"socket_path", m.socketPath)
+
 	// Add HUMANLAYER_RUN_ID and HUMANLAYER_DAEMON_SOCKET to MCP server environment
-	if config.MCPConfig != nil {
-		slog.Debug("configuring MCP servers", "count", len(config.MCPConfig.MCPServers))
-		for name, server := range config.MCPConfig.MCPServers {
-			if server.Env == nil {
-				server.Env = make(map[string]string)
+	// For HTTP servers, inject session ID header
+	if claudeConfig.MCPConfig != nil {
+		slog.Debug("configuring MCP servers", "count", len(claudeConfig.MCPConfig.MCPServers))
+		for name, server := range claudeConfig.MCPConfig.MCPServers {
+			// Check if this is an HTTP MCP server
+			if server.Type == "http" {
+				// For HTTP servers, inject session ID header if not already set
+				if server.Headers == nil {
+					server.Headers = make(map[string]string)
+				}
+				// Only inject if not already set (allow override)
+				if _, exists := server.Headers["X-Session-ID"]; !exists {
+					server.Headers["X-Session-ID"] = sessionID
+				}
+				slog.Debug("configured HTTP MCP server",
+					"name", name,
+					"url", server.URL,
+					"session_id", sessionID)
+			} else {
+				// For stdio servers, add environment variables
+				if server.Env == nil {
+					server.Env = make(map[string]string)
+				}
+				server.Env["HUMANLAYER_RUN_ID"] = runID
+				// Add daemon socket path so MCP servers connect to the correct daemon
+				if m.socketPath != "" {
+					server.Env["HUMANLAYER_DAEMON_SOCKET"] = m.socketPath
+				}
+				slog.Debug("configured stdio MCP server",
+					"name", name,
+					"command", server.Command,
+					"args", server.Args,
+					"run_id", runID,
+					"socket_path", m.socketPath)
 			}
-			server.Env["HUMANLAYER_RUN_ID"] = runID
-			// Add daemon socket path so MCP servers connect to the correct daemon
-			if m.socketPath != "" {
-				server.Env["HUMANLAYER_DAEMON_SOCKET"] = m.socketPath
-			}
-			config.MCPConfig.MCPServers[name] = server
-			slog.Debug("configured MCP server",
-				"name", name,
-				"command", server.Command,
-				"args", server.Args,
-				"run_id", runID,
-				"socket_path", m.socketPath)
+			claudeConfig.MCPConfig.MCPServers[name] = server
 		}
 	} else {
 		slog.Debug("no MCP config provided")
 	}
 
 	// Capture current working directory if not specified
-	if config.WorkingDir == "" {
+	if claudeConfig.WorkingDir == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
 			slog.Warn("failed to get current working directory", "error", err)
 		} else {
-			config.WorkingDir = cwd
+			claudeConfig.WorkingDir = cwd
 			slog.Debug("No working directory provided, falling back to cwd of daemon", "working_dir", cwd)
 		}
 	}
@@ -104,15 +155,42 @@ func (m *Manager) LaunchSession(ctx context.Context, config claudecode.SessionCo
 	startTime := time.Now()
 
 	// Store session in database
-	dbSession := store.NewSessionFromConfig(sessionID, runID, config)
-	dbSession.Summary = CalculateSummary(config.Query)
+	dbSession := store.NewSessionFromConfig(sessionID, runID, claudeConfig)
+	dbSession.Summary = CalculateSummary(claudeConfig.Query)
+
+	// Set title from launch config if provided
+	if config.Title != "" {
+		dbSession.Title = config.Title
+	}
+
+	// Handle auto-accept edits from config
+	dbSession.AutoAcceptEdits = config.AutoAcceptEdits
+
+	// Handle dangerously skip permissions from config
+	if config.DangerouslySkipPermissions {
+		dbSession.DangerouslySkipPermissions = true
+		// Only set expiry if timeout is provided
+		if config.DangerouslySkipPermissionsTimeout != nil && *config.DangerouslySkipPermissionsTimeout > 0 {
+			expiresAt := time.Now().Add(time.Duration(*config.DangerouslySkipPermissionsTimeout) * time.Millisecond)
+			dbSession.DangerouslySkipPermissionsExpiresAt = &expiresAt
+		}
+	}
+
+	// Handle proxy configuration from config
+	if config.ProxyEnabled {
+		dbSession.ProxyEnabled = config.ProxyEnabled
+		dbSession.ProxyBaseURL = config.ProxyBaseURL
+		dbSession.ProxyModelOverride = config.ProxyModelOverride
+		dbSession.ProxyAPIKey = config.ProxyAPIKey
+	}
+
 	if err := m.store.CreateSession(ctx, dbSession); err != nil {
 		return nil, fmt.Errorf("failed to store session in database: %w", err)
 	}
 
 	// Store MCP servers if configured
-	if config.MCPConfig != nil && len(config.MCPConfig.MCPServers) > 0 {
-		servers, err := store.MCPServersFromConfig(sessionID, config.MCPConfig.MCPServers)
+	if claudeConfig.MCPConfig != nil && len(claudeConfig.MCPConfig.MCPServers) > 0 {
+		servers, err := store.MCPServersFromConfig(sessionID, claudeConfig.MCPConfig.MCPServers)
 		if err != nil {
 			slog.Error("failed to convert MCP servers", "error", err)
 		} else if err := m.store.StoreMCPServers(ctx, sessionID, servers); err != nil {
@@ -122,31 +200,63 @@ func (m *Manager) LaunchSession(ctx context.Context, config claudecode.SessionCo
 
 	// No longer storing full session in memory
 
+	// Set proxy URL for this session ONLY when proxy is explicitly enabled
+	if config.ProxyEnabled {
+		if claudeConfig.Env == nil {
+			claudeConfig.Env = make(map[string]string)
+		}
+		// Point Claude back to our proxy endpoint
+		// Use the actual HTTP port if set, otherwise default to 7777
+		m.mu.RLock()
+		httpPort := m.httpPort
+		m.mu.RUnlock()
+		if httpPort == 0 {
+			httpPort = 7777 // fallback to default
+			slog.Warn("HTTP port not set, using default", "default_port", httpPort)
+		}
+		proxyURL := fmt.Sprintf("http://localhost:%d/api/v1/anthropic_proxy/%s", httpPort, sessionID)
+		claudeConfig.Env["ANTHROPIC_BASE_URL"] = proxyURL
+		// Claude CLI needs an API key to trigger requests, even though proxy handles auth, set dummy key
+		claudeConfig.Env["ANTHROPIC_API_KEY"] = "proxy-handled"
+		slog.Info("Setting ANTHROPIC_BASE_URL for proxy",
+			"session_id", sessionID,
+			"proxy_url", proxyURL,
+			"proxy_enabled", config.ProxyEnabled,
+			"proxy_base_url", config.ProxyBaseURL,
+			"proxy_model", config.ProxyModelOverride,
+			"has_api_key", config.ProxyAPIKey != "",
+			"has_env_key", os.Getenv("OPENROUTER_API_KEY") != "")
+	}
+
 	// Log final configuration before launching
 	var mcpServersDetail string
 	var mcpServerCount int
-	if config.MCPConfig != nil {
-		mcpServerCount = len(config.MCPConfig.MCPServers)
-		for name, server := range config.MCPConfig.MCPServers {
-			mcpServersDetail += fmt.Sprintf("[%s: cmd=%s args=%v env=%v] ", name, server.Command, server.Args, server.Env)
+	if claudeConfig.MCPConfig != nil {
+		mcpServerCount = len(claudeConfig.MCPConfig.MCPServers)
+		for name, server := range claudeConfig.MCPConfig.MCPServers {
+			if server.Type == "http" {
+				mcpServersDetail += fmt.Sprintf("[%s: type=http url=%s headers=%v] ", name, server.URL, server.Headers)
+			} else {
+				mcpServersDetail += fmt.Sprintf("[%s: cmd=%s args=%v env=%v] ", name, server.Command, server.Args, server.Env)
+			}
 		}
 	}
 	slog.Info("launching Claude session with configuration",
 		"session_id", sessionID,
 		"run_id", runID,
-		"query", config.Query,
-		"working_dir", config.WorkingDir,
-		"permission_prompt_tool", config.PermissionPromptTool,
+		"query", claudeConfig.Query,
+		"working_dir", claudeConfig.WorkingDir,
+		"permission_prompt_tool", claudeConfig.PermissionPromptTool,
 		"mcp_servers", mcpServerCount,
 		"mcp_servers_detail", mcpServersDetail)
 
-	// Launch Claude session
-	claudeSession, err := m.client.Launch(config)
+	// Launch Claude session (without daemon-level settings)
+	claudeSession, err := m.client.Launch(claudeConfig)
 	if err != nil {
 		slog.Error("failed to launch Claude session",
 			"session_id", sessionID,
 			"error", err,
-			"config", fmt.Sprintf("%+v", config))
+			"config", fmt.Sprintf("%+v", claudeConfig))
 		m.updateSessionStatus(ctx, sessionID, StatusFailed, err.Error())
 		return nil, fmt.Errorf("failed to launch Claude session: %w", err)
 	}
@@ -192,16 +302,23 @@ func (m *Manager) LaunchSession(ctx context.Context, config claudecode.SessionCo
 	}
 
 	// Store query for injection after Claude session ID is captured
-	m.pendingQueries.Store(sessionID, config.Query)
+	m.pendingQueries.Store(sessionID, claudeConfig.Query)
 
 	// Monitor session lifecycle in background
-	go m.monitorSession(ctx, sessionID, runID, wrappedSession, startTime, config)
+	go m.monitorSession(ctx, sessionID, runID, wrappedSession, startTime, claudeConfig)
 
 	// Reconcile any existing approvals for this run_id
 	if m.approvalReconciler != nil {
 		go func() {
-			// Give the session a moment to start
-			time.Sleep(2 * time.Second)
+			// Give the session a moment to start (with cancellation support)
+			select {
+			case <-time.After(2 * time.Second):
+				// Continue with reconciliation
+			case <-ctx.Done():
+				// Context cancelled, exit early
+				return
+			}
+
 			if err := m.approvalReconciler.ReconcileApprovalsForSession(ctx, runID); err != nil {
 				slog.Error("failed to reconcile approvals for session",
 					"session_id", sessionID,
@@ -214,8 +331,8 @@ func (m *Manager) LaunchSession(ctx context.Context, config claudecode.SessionCo
 	slog.Info("launched Claude session",
 		"session_id", sessionID,
 		"run_id", runID,
-		"query", config.Query,
-		"permission_prompt_tool", config.PermissionPromptTool)
+		"query", claudeConfig.Query,
+		"permission_prompt_tool", claudeConfig.PermissionPromptTool)
 
 	// Return minimal session info for launch response
 	return &Session{
@@ -223,7 +340,7 @@ func (m *Manager) LaunchSession(ctx context.Context, config claudecode.SessionCo
 		RunID:     runID,
 		Status:    StatusRunning,
 		StartTime: startTime,
-		Config:    config,
+		Config:    claudeConfig,
 	}, nil
 }
 
@@ -263,9 +380,25 @@ eventLoop:
 				}
 			}
 
-			// Capture Claude session ID
-			if event.SessionID != "" && claudeSessionID == "" {
-				claudeSessionID = event.SessionID
+			// Capture Claude session ID from either top-level or message session_id
+			if claudeSessionID == "" {
+				if event.SessionID != "" {
+					claudeSessionID = event.SessionID
+				} else if event.Message != nil && event.Message.ID != "" {
+					// For assistant/user messages, we can use the message itself as proof of session
+					// The actual claude session ID might be in the raw JSON
+					if eventJSON, err := json.Marshal(event); err == nil {
+						var rawEvent map[string]interface{}
+						if err := json.Unmarshal(eventJSON, &rawEvent); err == nil {
+							if sid, ok := rawEvent["session_id"].(string); ok && sid != "" {
+								claudeSessionID = sid
+							}
+						}
+					}
+				}
+			}
+
+			if claudeSessionID != "" {
 				// Note: Claude session ID captured for resume capability
 				slog.Debug("captured Claude session ID",
 					"session_id", sessionID,
@@ -340,8 +473,16 @@ eventLoop:
 			})
 		}
 	} else if err != nil {
+		slog.Error("claude process failed",
+			"session_id", sessionID,
+			"error", err.Error(),
+			"duration", endTime.Sub(startTime))
 		m.updateSessionStatus(ctx, sessionID, StatusFailed, err.Error())
 	} else if result != nil && result.IsError {
+		slog.Error("claude process failed with error result",
+			"session_id", sessionID,
+			"error", result.Error,
+			"duration", endTime.Sub(startTime))
 		m.updateSessionStatus(ctx, sessionID, StatusFailed, result.Error)
 	} else {
 		// No longer updating in-memory session
@@ -390,10 +531,21 @@ eventLoop:
 		}
 	}
 
-	slog.Info("session completed",
-		"session_id", sessionID,
-		"status", StatusCompleted,
-		"duration", endTime.Sub(startTime))
+	// Determine final status for logging
+	finalStatus := StatusCompleted
+	if err != nil || (result != nil && result.IsError) {
+		finalStatus = StatusFailed
+	} else if dbErr == nil && session != nil && session.Status == string(StatusInterrupting) {
+		finalStatus = StatusInterrupted
+	}
+
+	// Only log as info if completed successfully, already logged errors above
+	if finalStatus == StatusCompleted {
+		slog.Info("session completed",
+			"session_id", sessionID,
+			"status", finalStatus,
+			"duration", endTime.Sub(startTime))
+	}
 
 	// Clean up active process
 	m.mu.Lock()
@@ -455,6 +607,7 @@ func (m *Manager) GetSessionInfo(sessionID string) (*Info, error) {
 		Summary:         dbSession.Summary,
 		Title:           dbSession.Title,
 		Model:           dbSession.Model,
+		ModelID:         dbSession.ModelID,
 		WorkingDir:      dbSession.WorkingDir,
 		AutoAcceptEdits: dbSession.AutoAcceptEdits,
 		Archived:        dbSession.Archived,
@@ -506,21 +659,24 @@ func (m *Manager) ListSessions() []Info {
 	infos := make([]Info, 0, len(dbSessions))
 	for _, dbSession := range dbSessions {
 		info := Info{
-			ID:              dbSession.ID,
-			RunID:           dbSession.RunID,
-			ClaudeSessionID: dbSession.ClaudeSessionID,
-			ParentSessionID: dbSession.ParentSessionID,
-			Status:          Status(dbSession.Status),
-			StartTime:       dbSession.CreatedAt,
-			LastActivityAt:  dbSession.LastActivityAt,
-			Error:           dbSession.ErrorMessage,
-			Query:           dbSession.Query,
-			Summary:         dbSession.Summary,
-			Title:           dbSession.Title,
-			Model:           dbSession.Model,
-			WorkingDir:      dbSession.WorkingDir,
-			AutoAcceptEdits: dbSession.AutoAcceptEdits,
-			Archived:        dbSession.Archived,
+			ID:                                  dbSession.ID,
+			RunID:                               dbSession.RunID,
+			ClaudeSessionID:                     dbSession.ClaudeSessionID,
+			ParentSessionID:                     dbSession.ParentSessionID,
+			Status:                              Status(dbSession.Status),
+			StartTime:                           dbSession.CreatedAt,
+			LastActivityAt:                      dbSession.LastActivityAt,
+			Error:                               dbSession.ErrorMessage,
+			Query:                               dbSession.Query,
+			Summary:                             dbSession.Summary,
+			Title:                               dbSession.Title,
+			Model:                               dbSession.Model,
+			ModelID:                             dbSession.ModelID,
+			WorkingDir:                          dbSession.WorkingDir,
+			AutoAcceptEdits:                     dbSession.AutoAcceptEdits,
+			Archived:                            dbSession.Archived,
+			DangerouslySkipPermissions:          dbSession.DangerouslySkipPermissions,
+			DangerouslySkipPermissionsExpiresAt: dbSession.DangerouslySkipPermissionsExpiresAt,
 		}
 
 		// Set end time if completed
@@ -575,7 +731,75 @@ func (m *Manager) updateSessionActivity(ctx context.Context, sessionID string) {
 
 // processStreamEvent processes a streaming event and stores it in the database
 func (m *Manager) processStreamEvent(ctx context.Context, sessionID string, claudeSessionID string, event claudecode.StreamEvent) error {
-	// Skip events without claude session ID
+	// Log the entire raw event JSON for debugging
+	if eventJSON, err := json.Marshal(event); err == nil {
+		slog.Debug("processing API event",
+			"session_id", sessionID,
+			"event_type", event.Type,
+			"raw_event_json", string(eventJSON))
+	}
+
+	// Process token updates from assistant messages even without claudeSessionID
+	if event.Type == "assistant" && event.Message != nil && event.Message.Role == "assistant" && event.Message.Usage != nil {
+		// QUICK FIX: Skip token updates for subagent events
+		// Subagents have parent_tool_use_id set at the event level
+		if event.ParentToolUseID != "" {
+			slog.Debug("skipping token update for subagent event",
+				"session_id", sessionID,
+				"parent_tool_use_id", event.ParentToolUseID)
+			// Continue processing the rest of the event, just skip token updates
+		} else {
+			// Original token update logic for root-level events
+			usage := event.Message.Usage
+			// Compute effective context tokens (what's actually in the context window)
+			// This includes ALL tokens that count toward the context limit
+			effective := usage.InputTokens + usage.OutputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+
+			now := time.Now()
+			update := store.SessionUpdate{
+				InputTokens:              &usage.InputTokens,
+				OutputTokens:             &usage.OutputTokens,
+				CacheCreationInputTokens: &usage.CacheCreationInputTokens,
+				CacheReadInputTokens:     &usage.CacheReadInputTokens,
+				EffectiveContextTokens:   &effective,
+				LastActivityAt:           &now,
+			}
+
+			if err := m.store.UpdateSession(ctx, sessionID, update); err != nil {
+				slog.Error("failed to update token usage",
+					"session_id", sessionID,
+					"error", err)
+			} else {
+				// Publish event to notify UI about token update
+				// The UI needs "new_status" field even though we're not changing status
+				if m.eventBus != nil {
+					// Get current session to include current status
+					session, _ := m.store.GetSession(ctx, sessionID)
+					currentStatus := "running"
+					if session != nil && session.Status != "" {
+						currentStatus = session.Status
+					}
+
+					slog.Debug("Publishing token update event",
+						"session_id", sessionID,
+						"status", currentStatus,
+						"effective_tokens", effective)
+
+					m.eventBus.Publish(bus.Event{
+						Type: bus.EventSessionStatusChanged,
+						Data: map[string]interface{}{
+							"session_id": sessionID,
+							"new_status": currentStatus, // Required by UI handler
+							"old_status": currentStatus, // Status isn't changing, just tokens
+							"reason":     "token_update",
+						},
+					})
+				}
+			}
+		}
+	}
+
+	// Skip remaining event processing without claude session ID
 	if claudeSessionID == "" {
 		return nil
 	}
@@ -621,6 +845,9 @@ func (m *Manager) processStreamEvent(ctx context.Context, sessionID string, clau
 
 			// Only update if model is empty and init event has a model
 			if session != nil && session.Model == "" && event.Model != "" {
+				// Store the full model ID
+				modelID := event.Model
+
 				// Extract simple model name from API format (case-insensitive)
 				var modelName string
 				lowerModel := strings.ToLower(event.Model)
@@ -630,27 +857,39 @@ func (m *Manager) processStreamEvent(ctx context.Context, sessionID string, clau
 					modelName = "sonnet"
 				}
 
-				// Update session with detected model
+				// Update session with both model ID and simplified name
 				if modelName != "" {
 					update := store.SessionUpdate{
-						Model: &modelName,
+						Model:   &modelName,
+						ModelID: &modelID,
 					}
 					if err := m.store.UpdateSession(ctx, sessionID, update); err != nil {
 						slog.Error("failed to update session model from init event",
 							"session_id", sessionID,
 							"model", modelName,
+							"model_id", modelID,
 							"error", err)
 					} else {
 						slog.Info("populated session model from init event",
 							"session_id", sessionID,
 							"model", modelName,
-							"original", event.Model)
+							"model_id", modelID)
 					}
 				} else {
-					// Log when we detect a model but don't recognize the format
-					slog.Debug("unrecognized model format in init event",
-						"session_id", sessionID,
-						"model", event.Model)
+					// Still store the model ID even if we don't recognize the format
+					update := store.SessionUpdate{
+						ModelID: &modelID,
+					}
+					if err := m.store.UpdateSession(ctx, sessionID, update); err != nil {
+						slog.Error("failed to update session model_id from init event",
+							"session_id", sessionID,
+							"model_id", modelID,
+							"error", err)
+					} else {
+						slog.Debug("stored unrecognized model format in init event",
+							"session_id", sessionID,
+							"model_id", modelID)
+					}
 				}
 			}
 			// Don't store init event in conversation history - we only extract the model
@@ -660,6 +899,7 @@ func (m *Manager) processStreamEvent(ctx context.Context, sessionID string, clau
 	case "assistant", "user":
 		// Messages contain the actual content
 		if event.Message != nil {
+			// Token usage is already processed at the top of this function
 			// Process each content block
 			for _, content := range event.Message.Content {
 				switch content.Type {
@@ -836,6 +1076,19 @@ func (m *Manager) processStreamEvent(ctx context.Context, sessionID string, clau
 			CostUSD:        &event.CostUSD,
 			DurationMS:     &event.DurationMS,
 		}
+
+		// Process usage data from result event
+		if event.Usage != nil {
+			usage := event.Usage
+			// Skip updating token counts from result events - they appear to accumulate incorrectly
+			// Result events show cumulative cache reads across the entire session (bug)
+			// We only trust token counts from individual assistant messages
+			slog.Debug("Skipping result event token update due to API bug",
+				"session_id", sessionID,
+				"cache_read_tokens", usage.CacheReadInputTokens,
+				"reason", "result events report cumulative cache reads")
+		}
+
 		if event.Error != "" {
 			update.ErrorMessage = &event.Error
 		}
@@ -963,11 +1216,12 @@ func (m *Manager) ContinueSession(ctx context.Context, req ContinueSessionConfig
 		return nil, fmt.Errorf("failed to get parent session: %w", err)
 	}
 
-	// Validate parent session status - allow completed, interrupted, or running sessions
+	// Validate parent session status - allow completed, interrupted, running, or failed sessions
 	if parentSession.Status != store.SessionStatusCompleted &&
 		parentSession.Status != store.SessionStatusInterrupted &&
-		parentSession.Status != store.SessionStatusRunning {
-		return nil, fmt.Errorf("cannot continue session with status %s (must be completed, interrupted, or running)", parentSession.Status)
+		parentSession.Status != store.SessionStatusRunning &&
+		parentSession.Status != store.SessionStatusFailed {
+		return nil, fmt.Errorf("cannot continue session with status %s (must be completed, interrupted, running, or failed)", parentSession.Status)
 	}
 
 	// Validate parent session has claude_session_id (needed for resume)
@@ -1061,10 +1315,24 @@ func (m *Manager) ContinueSession(ctx context.Context, req ContinueSessionConfig
 				env = map[string]string{}
 			}
 
-			config.MCPConfig.MCPServers[server.Name] = claudecode.MCPServer{
-				Command: server.Command,
-				Args:    args,
-				Env:     env,
+			// Check if this is an HTTP server (stored with command="http")
+			if server.Command == "http" {
+				// HTTP server - extract URL from args and headers from env
+				var urls []string
+				if err := json.Unmarshal([]byte(server.ArgsJSON), &urls); err == nil && len(urls) > 0 {
+					config.MCPConfig.MCPServers[server.Name] = claudecode.MCPServer{
+						Type:    "http",
+						URL:     urls[0],
+						Headers: env, // Headers were stored in EnvJSON
+					}
+				}
+			} else {
+				// Traditional stdio server
+				config.MCPConfig.MCPServers[server.Name] = claudecode.MCPServer{
+					Command: server.Command,
+					Args:    args,
+					Env:     env,
+				}
 			}
 		}
 		slog.Debug("inherited MCP servers from parent session",
@@ -1108,6 +1376,16 @@ func (m *Manager) ContinueSession(ctx context.Context, req ContinueSessionConfig
 	dbSession.Summary = CalculateSummary(req.Query)
 	// Inherit auto-accept setting from parent
 	dbSession.AutoAcceptEdits = parentSession.AutoAcceptEdits
+	// Inherit dangerously skip permissions from parent
+	dbSession.DangerouslySkipPermissions = parentSession.DangerouslySkipPermissions
+	dbSession.DangerouslySkipPermissionsExpiresAt = parentSession.DangerouslySkipPermissionsExpiresAt
+
+	// Check if dangerously skip permissions has expired on the parent
+	if dbSession.DangerouslySkipPermissions && dbSession.DangerouslySkipPermissionsExpiresAt != nil && time.Now().After(*dbSession.DangerouslySkipPermissionsExpiresAt) {
+		dbSession.DangerouslySkipPermissions = false
+		dbSession.DangerouslySkipPermissionsExpiresAt = nil
+	}
+
 	// Inherit title from parent session
 	dbSession.Title = parentSession.Title
 	// Explicitly ensure inherited values are stored (in case NewSessionFromConfig didn't capture them)
@@ -1117,21 +1395,81 @@ func (m *Manager) ContinueSession(ctx context.Context, req ContinueSessionConfig
 	if dbSession.WorkingDir == "" && parentSession.WorkingDir != "" {
 		dbSession.WorkingDir = parentSession.WorkingDir
 	}
+
+	// Inherit proxy configuration from parent or use provided values
+	if req.ProxyEnabled || parentSession.ProxyEnabled {
+		dbSession.ProxyEnabled = true
+		// Use provided proxy config if available, otherwise inherit from parent
+		if req.ProxyBaseURL != "" {
+			dbSession.ProxyBaseURL = req.ProxyBaseURL
+		} else {
+			dbSession.ProxyBaseURL = parentSession.ProxyBaseURL
+		}
+		if req.ProxyModelOverride != "" {
+			dbSession.ProxyModelOverride = req.ProxyModelOverride
+		} else {
+			dbSession.ProxyModelOverride = parentSession.ProxyModelOverride
+		}
+		if req.ProxyAPIKey != "" {
+			dbSession.ProxyAPIKey = req.ProxyAPIKey
+		} else {
+			dbSession.ProxyAPIKey = parentSession.ProxyAPIKey
+		}
+	}
+
 	// Note: ClaudeSessionID will be captured from streaming events (will be different from parent)
 	if err := m.store.CreateSession(ctx, dbSession); err != nil {
 		return nil, fmt.Errorf("failed to store session in database: %w", err)
 	}
 
 	// Add run_id and daemon socket to MCP server environments
+	// For HTTP servers, inject session ID header
+
+	// Ensure MCP config exists for injection
+	if config.MCPConfig == nil {
+		config.MCPConfig = &claudecode.MCPConfig{
+			MCPServers: make(map[string]claudecode.MCPServer),
+		}
+	}
+
+	// Always update codelayer MCP server with child session ID
+	config.MCPConfig.MCPServers["codelayer"] = claudecode.MCPServer{
+		Command: hldconfig.DefaultCLICommand,
+		Args:    []string{"mcp", "claude_approvals"},
+		Env: map[string]string{
+			"HUMANLAYER_SESSION_ID":    sessionID, // Use child session ID
+			"HUMANLAYER_DAEMON_SOCKET": m.socketPath,
+		},
+	}
+	slog.Debug("updated codelayer MCP server for child session",
+		"session_id", sessionID,
+		"parent_session_id", req.ParentSessionID,
+		"socket_path", m.socketPath)
+
 	if config.MCPConfig != nil {
 		for name, server := range config.MCPConfig.MCPServers {
-			if server.Env == nil {
-				server.Env = make(map[string]string)
+			// Skip codelayer as we already configured it above
+			if name == "codelayer" {
+				continue
 			}
-			server.Env["HUMANLAYER_RUN_ID"] = runID
-			// Add daemon socket path so MCP servers connect to the correct daemon
-			if m.socketPath != "" {
-				server.Env["HUMANLAYER_DAEMON_SOCKET"] = m.socketPath
+			// Check if this is an HTTP MCP server
+			if server.Type == "http" {
+				// For HTTP servers, always set session ID header to child session ID
+				if server.Headers == nil {
+					server.Headers = make(map[string]string)
+				}
+				// Always set X-Session-ID to the new child session ID (replaces inherited parent ID)
+				server.Headers["X-Session-ID"] = sessionID
+			} else {
+				// For stdio servers, add environment variables
+				if server.Env == nil {
+					server.Env = make(map[string]string)
+				}
+				server.Env["HUMANLAYER_RUN_ID"] = runID
+				// Add daemon socket path so MCP servers connect to the correct daemon
+				if m.socketPath != "" {
+					server.Env["HUMANLAYER_DAEMON_SOCKET"] = m.socketPath
+				}
 			}
 			config.MCPConfig.MCPServers[name] = server
 		}
@@ -1145,9 +1483,50 @@ func (m *Manager) ContinueSession(ctx context.Context, req ContinueSessionConfig
 		}
 	}
 
+	// Set proxy URL for resumed session when proxy is enabled
+	if dbSession.ProxyEnabled {
+		if config.Env == nil {
+			config.Env = make(map[string]string)
+		}
+		// Point Claude back to our proxy endpoint
+		// Use the actual HTTP port if set, otherwise default to 7777
+		m.mu.RLock()
+		httpPort := m.httpPort
+		m.mu.RUnlock()
+		if httpPort == 0 {
+			httpPort = 7777 // fallback to default
+			slog.Warn("HTTP port not set, using default", "default_port", httpPort)
+		}
+		proxyURL := fmt.Sprintf("http://localhost:%d/api/v1/anthropic_proxy/%s", httpPort, sessionID)
+		config.Env["ANTHROPIC_BASE_URL"] = proxyURL
+		// Claude CLI needs an API key to trigger requests, even though proxy handles auth
+		config.Env["ANTHROPIC_API_KEY"] = "proxy-handled"
+		slog.Info("Setting ANTHROPIC_BASE_URL for resumed session proxy",
+			"session_id", sessionID,
+			"proxy_url", proxyURL,
+			"proxy_enabled", dbSession.ProxyEnabled,
+			"has_openrouter_key", os.Getenv("OPENROUTER_API_KEY") != "")
+	}
+
 	// Launch resumed Claude session
+	slog.Info("attempting to resume Claude session",
+		"session_id", sessionID,
+		"parent_session_id", req.ParentSessionID,
+		"parent_status", parentSession.Status,
+		"claude_session_id", parentSession.ClaudeSessionID,
+		"query", req.Query,
+		"proxy_enabled", dbSession.ProxyEnabled,
+		"proxy_base_url", dbSession.ProxyBaseURL,
+		"proxy_model", dbSession.ProxyModelOverride)
+
 	claudeSession, err := m.client.Launch(config)
 	if err != nil {
+		slog.Error("failed to resume Claude session from failed parent",
+			"session_id", sessionID,
+			"parent_session_id", req.ParentSessionID,
+			"parent_status", parentSession.Status,
+			"claude_session_id", parentSession.ClaudeSessionID,
+			"error", err)
 		m.updateSessionStatus(ctx, sessionID, StatusFailed, err.Error())
 		return nil, fmt.Errorf("failed to launch resumed Claude session: %w", err)
 	}
@@ -1194,8 +1573,15 @@ func (m *Manager) ContinueSession(ctx context.Context, req ContinueSessionConfig
 	// Reconcile any existing approvals for this run_id (same run_id is reused for continuations)
 	if m.approvalReconciler != nil {
 		go func() {
-			// Give the session a moment to start
-			time.Sleep(2 * time.Second)
+			// Give the session a moment to start (with cancellation support)
+			select {
+			case <-time.After(2 * time.Second):
+				// Continue with reconciliation
+			case <-ctx.Done():
+				// Context cancelled, exit early
+				return
+			}
+
 			if err := m.approvalReconciler.ReconcileApprovalsForSession(ctx, runID); err != nil {
 				slog.Error("failed to reconcile approvals for continued session",
 					"session_id", sessionID,
@@ -1398,4 +1784,27 @@ func (m *Manager) forceKillRemaining() {
 				"error", err)
 		}
 	}
+}
+
+// UpdateSessionSettings updates session settings and publishes appropriate events
+func (m *Manager) UpdateSessionSettings(ctx context.Context, sessionID string, updates store.SessionUpdate) error {
+	// First update the store
+	if err := m.store.UpdateSession(ctx, sessionID, updates); err != nil {
+		return err
+	}
+
+	// If auto-accept edits was updated, publish the settings changed event
+	if updates.AutoAcceptEdits != nil {
+		if m.eventBus != nil {
+			m.eventBus.Publish(bus.Event{
+				Type: bus.EventSessionSettingsChanged,
+				Data: map[string]interface{}{
+					"session_id":        sessionID,
+					"auto_accept_edits": *updates.AutoAcceptEdits,
+				},
+			})
+		}
+	}
+
+	return nil
 }

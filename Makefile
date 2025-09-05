@@ -1,6 +1,19 @@
 .PHONY: setup
 setup: ## Set up the repository with all dependencies and builds
 	hack/setup_repo.sh
+
+# CI-specific targets
+.PHONY: setup-ci ci-tools
+
+## CI Setup Commands
+setup-ci: ci-tools setup ## Complete CI setup including CI-specific tools
+	@echo "✅ CI setup complete"
+
+ci-tools: ## Install CI-specific tools
+	@echo "Installing CI-specific tools..."
+	@command -v claude >/dev/null 2>&1 || npm install -g @anthropic-ai/claude-code
+	@command -v uv >/dev/null 2>&1 || (curl -LsSf https://astral.sh/uv/install.sh | sh)
+	@command -v golangci-lint >/dev/null 2>&1 || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 thoughts:
 	humanlayer thoughts init --directory humanlayer
 
@@ -136,6 +149,14 @@ publish-ts: build-ts
 
 .PHONY: build-and-publish
 build-and-publish: build publish ## Build and publish.
+
+.PHONY: generate-sdks
+generate-sdks: ## Regenerate all SDKs from OpenAPI specs
+	@echo "Regenerating TypeScript SDK from OpenAPI spec..."
+	@$(MAKE) -C hld generate-sdks
+	@echo "Updating SDK in humanlayer-wui..."
+	@$(MAKE) -C humanlayer-wui install
+	@echo "SDK regeneration complete!"
 
 .PHONY: help
 help:
@@ -481,7 +502,9 @@ daemon: daemon-dev
 # Build nightly daemon binary
 .PHONY: daemon-nightly-build
 daemon-nightly-build:
-	cd hld && go build -o hld-nightly ./cmd/hld
+	cd hld && go build -ldflags "\
+		-X github.com/humanlayer/humanlayer/hld/config.DefaultCLICommand=humanlayer-nightly" \
+		-o hld-nightly ./cmd/hld
 	@echo "Built nightly daemon binary: hld/hld-nightly"
 
 # Run nightly daemon
@@ -499,6 +522,72 @@ wui-nightly-build:
 	@echo "Build complete. Installing to ~/Applications..."
 	cp -r humanlayer-wui/src-tauri/target/release/bundle/macos/CodeLayer.app ~/Applications/
 	@echo "Installed WUI nightly to ~/Applications/CodeLayer.app"
+
+# Build humanlayer binary for bundling
+.PHONY: humanlayer-build
+humanlayer-build:
+	@echo "Building humanlayer CLI binary..."
+	cd hlyr && bun install && bun run build
+	@echo "humanlayer binary built at hlyr/dist/index.js"
+
+# Build humanlayer standalone binary (requires bun)
+.PHONY: humanlayer-binary-darwin-arm64
+humanlayer-binary-darwin-arm64: humanlayer-build
+	@echo "Creating standalone humanlayer binary for macOS ARM64..."
+	cd hlyr && bun build ./dist/index.js --compile --target=bun-darwin-arm64 --outfile=humanlayer-darwin-arm64
+	chmod +x hlyr/humanlayer-darwin-arm64
+	@echo "Standalone binary created at hlyr/humanlayer-darwin-arm64"
+
+# Build CodeLayer with bundled daemon and humanlayer
+.PHONY: codelayer-bundle
+codelayer-bundle:
+	@echo "Building daemon for bundling..."
+	cd hld && GOOS=darwin GOARCH=arm64 go build -o hld-darwin-arm64 ./cmd/hld
+	@echo "Building humanlayer for bundling..."
+	cd hlyr && bun install && bun run build
+	cd hlyr && bun build ./dist/index.js --compile --target=bun-darwin-arm64 --outfile=humanlayer-darwin-arm64
+
+codelayer-nightly-bundle:
+	@echo "Setting build version..."
+	$(eval BUILD_VERSION := $(shell date +%Y%m%d)-nightly-local)
+	@echo "Building nightly daemon for bundling (version: $(BUILD_VERSION))..."
+	cd hld && GOOS=darwin GOARCH=arm64 go build -ldflags "\
+		-X github.com/humanlayer/humanlayer/hld/internal/version.BuildVersion=$(BUILD_VERSION) \
+		-X github.com/humanlayer/humanlayer/hld/config.DefaultDatabasePath=~/.humanlayer/daemon-nightly.db \
+		-X github.com/humanlayer/humanlayer/hld/config.DefaultSocketPath=~/.humanlayer/daemon-nightly.sock \
+		-X github.com/humanlayer/humanlayer/hld/config.DefaultHTTPPort=7778 \
+		-X github.com/humanlayer/humanlayer/hld/config.DefaultCLICommand=humanlayer-nightly" \
+		-o hld-darwin-arm64 ./cmd/hld
+	@echo "Building humanlayer CLI for bundling..."
+	cd hlyr && bun install && bun run build
+	cd hlyr && bun build ./dist/index.js --compile --target=bun-darwin-arm64 --outfile=humanlayer-darwin-arm64
+	chmod +x hlyr/humanlayer-darwin-arm64
+	@echo "Copying binaries to Tauri resources..."
+	mkdir -p humanlayer-wui/src-tauri/bin
+	cp hld/hld-darwin-arm64 humanlayer-wui/src-tauri/bin/hld
+	cp hlyr/humanlayer-darwin-arm64 humanlayer-wui/src-tauri/bin/humanlayer
+	chmod +x humanlayer-wui/src-tauri/bin/hld
+	chmod +x humanlayer-wui/src-tauri/bin/humanlayer
+	@echo "Installing WUI dependencies..."
+	cd humanlayer-wui && bun install
+	@echo "Backing up original icons and using nightly icons..."
+	@# Clean up any leftover backup directories first
+	cd humanlayer-wui/src-tauri && rm -rf icons-original icons-backup
+	cd humanlayer-wui/src-tauri && cp -r icons icons-original && rm -rf icons && cp -r icons-nightly icons
+	@echo "Building Tauri app with nightly config (with ad-hoc signing)..."
+	@# Use trap to ensure icons are restored even if build fails
+	cd humanlayer-wui && ( \
+		APPLE_SIGNING_IDENTITY="-" NO_STRIP=1 bun run tauri build --config src-tauri/tauri.nightly.conf.json; \
+		EXIT_CODE=$$?; \
+		echo "Restoring original icons..."; \
+		cd src-tauri && rm -rf icons && cp -r icons-original icons && rm -rf icons-original; \
+		exit $$EXIT_CODE \
+	)
+	@echo "Nightly build complete! DMG available at:"
+	@ls -la humanlayer-wui/src-tauri/target/release/bundle/dmg/*.dmg
+
+codelayer-dev: daemon-dev-build wui-dev
+	@echo "Build complete!"
 
 # Open nightly WUI
 .PHONY: wui-nightly
@@ -557,8 +646,10 @@ cleanup-dev:
 
 # Build dev daemon binary
 .PHONY: daemon-dev-build
-daemon-dev-build:
-	cd hld && go build -o hld-dev ./cmd/hld
+daemon-dev-build: setup
+	cd hld && go build -ldflags "\
+		-X github.com/humanlayer/humanlayer/hld/config.DefaultCLICommand=$(PWD)/hlyr/dist/index.js" \
+		-o hld-dev ./cmd/hld
 	@echo "Built dev daemon binary: hld/hld-dev"
 
 # Run dev daemon with persistent dev database
@@ -570,16 +661,18 @@ daemon-dev: daemon-dev-build
 	echo "$(TIMESTAMP) starting dev daemon in $$(pwd)" > ~/.humanlayer/logs/daemon-dev-$(TIMESTAMP).log
 	cd hld && HUMANLAYER_DATABASE_PATH=~/.humanlayer/daemon-dev.db \
 		HUMANLAYER_DAEMON_SOCKET=~/.humanlayer/daemon-dev.sock \
+		HUMANLAYER_DAEMON_HTTP_PORT=0 \
 		HUMANLAYER_DAEMON_VERSION_OVERRIDE=$$(git branch --show-current) \
 		./run-with-logging.sh ~/.humanlayer/logs/daemon-dev-$(TIMESTAMP).log ./hld-dev
 
 # Run dev WUI with custom socket
 .PHONY: wui-dev
 wui-dev:
-	@mkdir -p ~/.humanlayer/logs
-	$(eval TIMESTAMP := $(shell date +%Y-%m-%d-%H-%M-%S))
-	echo "$(TIMESTAMP) starting dev wui in $$(pwd)" > ~/.humanlayer/logs/wui-dev-$(TIMESTAMP).log
-	cd humanlayer-wui && HUMANLAYER_DAEMON_SOCKET=~/.humanlayer/daemon-dev.sock bun run tauri dev 2>&1 | tee -a ~/.humanlayer/logs/wui-dev-$(TIMESTAMP).log
+	cd humanlayer-wui && HUMANLAYER_DAEMON_SOCKET=~/.humanlayer/daemon-dev.sock bun run tauri dev
+
+# Alias for wui-dev that ensures daemon is built first
+.PHONY: codelayer-dev
+codelayer-dev: daemon-dev-build wui-dev
 
 # Show current dev environment setup
 .PHONY: dev-status

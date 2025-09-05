@@ -5,6 +5,9 @@ import { cn } from '@/lib/utils'
 import CommandInput from './CommandInput'
 import CommandPaletteMenu from './CommandPaletteMenu'
 import { useSessionLauncher } from '@/hooks/useSessionLauncher'
+import { useStealHotkeyScope } from '@/hooks/useStealHotkeyScope'
+
+const SessionLauncherHotkeysScope = 'session-launcher'
 
 interface SessionLauncherProps {
   isOpen: boolean
@@ -16,10 +19,51 @@ export function SessionLauncher({ isOpen, onClose }: SessionLauncherProps) {
   const { query, setQuery, config, setConfig, launchSession, isLaunching, error, mode, view, setView } =
     useSessionLauncher()
 
-  useHotkeys('escape', onClose, {
-    enabled: isOpen,
-    enableOnFormTags: false,
-  })
+  useHotkeys(
+    'escape',
+    e => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      // Check if an input is currently focused
+      const activeElement = document.activeElement
+      const isInputFocused =
+        activeElement?.tagName === 'INPUT' ||
+        activeElement?.tagName === 'TEXTAREA' ||
+        (activeElement as HTMLElement)?.contentEditable === 'true'
+
+      if (isInputFocused) {
+        // First ESC: just blur the input
+        ;(activeElement as HTMLElement).blur()
+      } else {
+        // Second ESC or ESC when no input focused: close modal
+        onClose()
+      }
+    },
+    {
+      enabled: isOpen,
+      enableOnFormTags: true,
+      scopes: SessionLauncherHotkeysScope,
+    },
+  )
+
+  useHotkeys(
+    'meta+enter, ctrl+enter',
+    e => {
+      e.preventDefault()
+      e.stopPropagation()
+      handleSubmit()
+    },
+    {
+      enabled: isOpen,
+      enableOnFormTags: true, // Critical: allows the shortcut to work in form inputs
+      scopes: SessionLauncherHotkeysScope,
+      preventDefault: true,
+    },
+  )
+
+  // Only steal scope when actually open
+  useStealHotkeyScope(SessionLauncherHotkeysScope, isOpen)
 
   useEffect(() => {
     if (isOpen && view === 'input' && modalRef.current) {
@@ -86,7 +130,7 @@ export function SessionLauncher({ isOpen, onClose }: SessionLauncherProps) {
                   value={query}
                   onChange={setQuery}
                   onSubmit={handleSubmit}
-                  placeholder="Enter your prompt to start a session..."
+                  placeholder="Ask an agent..."
                   isLoading={isLaunching}
                   config={config}
                   onConfigChange={setConfig}
@@ -100,8 +144,7 @@ export function SessionLauncher({ isOpen, onClose }: SessionLauncherProps) {
 
                 <div className="flex items-center justify-end text-xs text-muted-foreground">
                   <div className="flex items-center space-x-2">
-                    <span>↵ Launch</span>
-                    <span>⌘K Close</span>
+                    <span>ESC Close</span>
                   </div>
                 </div>
               </>
