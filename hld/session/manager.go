@@ -1559,6 +1559,47 @@ func (m *Manager) ContinueSession(ctx context.Context, req ContinueSessionConfig
 		return nil, fmt.Errorf("failed to store session in database: %w", err)
 	}
 
+	// Store the continuation query immediately since parent has claude_session_id
+	// This ensures the message is visible in UI before Claude responds
+	if parentSession.ClaudeSessionID != "" {
+		// Get the current max sequence for proper ordering
+		maxSeq, err := m.store.GetMaxSequenceForClaudeSession(ctx, parentSession.ClaudeSessionID)
+		if err != nil {
+			slog.Warn("failed to get max sequence, starting at 1", "error", err)
+			maxSeq = 0
+		}
+
+		// Store the continuation query immediately
+		event := &store.ConversationEvent{
+			SessionID:       sessionID,
+			ClaudeSessionID: parentSession.ClaudeSessionID,
+			Sequence:        maxSeq + 1,
+			EventType:       store.EventTypeMessage,
+			CreatedAt:       time.Now(),
+			Role:            "user",
+			Content:         req.Query,
+		}
+
+		if err := m.store.AddConversationEvent(ctx, event); err != nil {
+			slog.Error("failed to store continuation query",
+				"error", err,
+				"session_id", sessionID,
+				"claude_session_id", parentSession.ClaudeSessionID)
+			// Non-fatal: continue with session launch
+		} else {
+			slog.Debug("stored continuation query immediately",
+				"session_id", sessionID,
+				"claude_session_id", parentSession.ClaudeSessionID,
+				"sequence", maxSeq+1)
+		}
+
+		// Don't add to pendingQueries since we already stored it
+	} else {
+		// This shouldn't happen due to validation at line 1342, but be defensive
+		slog.Warn("parent missing claude_session_id, deferring query injection")
+		m.pendingQueries.Store(sessionID, req.Query)
+	}
+
 	// Re-apply MCP servers to the new session
 	// This ensures that forked sessions retain the MCP configuration
 
@@ -1710,8 +1751,7 @@ func (m *Manager) ContinueSession(ctx context.Context, req ContinueSessionConfig
 		})
 	}
 
-	// Store query for injection after Claude session ID is captured
-	m.pendingQueries.Store(sessionID, req.Query)
+	// Note: Query was already stored or added to pendingQueries above
 
 	// Monitor session lifecycle in background
 	go m.monitorSession(ctx, sessionID, runID, wrappedSession, time.Now(), config)
@@ -1805,12 +1845,27 @@ func (m *Manager) InterruptSession(ctx context.Context, sessionID string) error 
 
 // injectQueryAsFirstEvent adds the user's query as the first conversation event
 func (m *Manager) injectQueryAsFirstEvent(ctx context.Context, sessionID, claudeSessionID, query string) error {
-	// Check if we already have a user message as the first event (deduplication)
-	events, err := m.store.GetConversation(ctx, claudeSessionID)
-	if err == nil && len(events) > 0 && events[0].Role == "user" {
-		return nil // Query already injected
+	// Get the session to check if it's a continuation
+	session, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		slog.Warn("failed to get session for query injection", "error", err)
+		// Fall back to original behavior
+	} else if session.ParentSessionID != "" {
+		// This is a continuation - query should already be stored
+		slog.Debug("skipping injection for continuation session",
+			"session_id", sessionID,
+			"parent_session_id", session.ParentSessionID)
+		return nil
 	}
 
+	// Original logic for new sessions
+	events, err := m.store.GetConversation(ctx, claudeSessionID)
+	if err == nil && len(events) > 0 && events[0].Role == "user" {
+		slog.Debug("query already exists, skipping injection")
+		return nil
+	}
+
+	// Inject the query as before
 	event := &store.ConversationEvent{
 		SessionID:       sessionID,
 		ClaudeSessionID: claudeSessionID,
@@ -1820,6 +1875,7 @@ func (m *Manager) injectQueryAsFirstEvent(ctx context.Context, sessionID, claude
 		Role:            "user",
 		Content:         query,
 	}
+
 	return m.store.AddConversationEvent(ctx, event)
 }
 

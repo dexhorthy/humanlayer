@@ -1849,6 +1849,23 @@ func (s *SQLiteStore) AddConversationEvent(ctx context.Context, event *Conversat
 	return tx.Commit()
 }
 
+// GetMaxSequenceForClaudeSession returns the maximum sequence number for a Claude session
+func (s *SQLiteStore) GetMaxSequenceForClaudeSession(ctx context.Context, claudeSessionID string) (int, error) {
+	var maxSeq sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT MAX(sequence)
+		FROM conversation_events
+		WHERE claude_session_id = ?
+	`, claudeSessionID).Scan(&maxSeq)
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to get max sequence: %w", err)
+	}
+
+	// If no events exist, maxSeq.Valid will be false and maxSeq.Int64 will be 0
+	return int(maxSeq.Int64), nil
+}
+
 // GetConversation retrieves all events for a Claude session
 func (s *SQLiteStore) GetConversation(ctx context.Context, claudeSessionID string) ([]*ConversationEvent, error) {
 	query := `

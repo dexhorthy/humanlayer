@@ -34,6 +34,9 @@ type ConversationStore interface {
 	LinkConversationEventToApprovalUsingToolID(ctx context.Context, sessionID string, toolID string, approvalID string) error
 	UpdateApprovalStatus(ctx context.Context, approvalID string, status string) error
 
+	// Sequence operations
+	GetMaxSequenceForClaudeSession(ctx context.Context, claudeSessionID string) (int, error)
+
 	// MCP server operations
 	StoreMCPServers(ctx context.Context, sessionID string, servers []MCPServer) error
 	GetMCPServers(ctx context.Context, sessionID string) ([]MCPServer, error)

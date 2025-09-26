@@ -243,6 +243,9 @@ func TestContinueSession_AllowsFailedSessionWithValidRequirements(t *testing.T) 
 			}
 			return nil
 		})
+	// Expect the new GetMaxSequenceForClaudeSession call
+	mockStore.EXPECT().GetMaxSequenceForClaudeSession(gomock.Any(), "claude-failed-valid").Return(0, nil)
+	mockStore.EXPECT().AddConversationEvent(gomock.Any(), gomock.Any()).Return(nil)
 	mockStore.EXPECT().StoreMCPServers(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockStore.EXPECT().UpdateSession(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
@@ -457,6 +460,10 @@ func TestContinueSession_CreatesNewSessionWithParentReference(t *testing.T) {
 			return nil
 		})
 
+	// Expect the new GetMaxSequenceForClaudeSession and AddConversationEvent calls
+	mockStore.EXPECT().GetMaxSequenceForClaudeSession(gomock.Any(), "claude-1").Return(5, nil)
+	mockStore.EXPECT().AddConversationEvent(gomock.Any(), gomock.Any()).Return(nil)
+
 	// Expect MCP servers to be stored (may or may not be called)
 	mockStore.EXPECT().StoreMCPServers(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
@@ -548,6 +555,10 @@ func TestContinueSession_HandlesOptionalOverrides(t *testing.T) {
 			}
 			return nil
 		})
+
+	// Expect the new GetMaxSequenceForClaudeSession and AddConversationEvent calls
+	mockStore.EXPECT().GetMaxSequenceForClaudeSession(gomock.Any(), "claude-1").Return(10, nil)
+	mockStore.EXPECT().AddConversationEvent(gomock.Any(), gomock.Any()).Return(nil)
 
 	// Expect MCP servers to be stored (if MCPConfig override is provided)
 	mockStore.EXPECT().StoreMCPServers(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()

@@ -122,6 +122,66 @@ func TestSQLiteStore(t *testing.T) {
 		require.Equal(t, "4", retrieved[3].ToolResultContent)
 	})
 
+	t.Run("GetMaxSequenceForClaudeSession", func(t *testing.T) {
+		// Test with empty session (no events)
+		maxSeq, err := store.GetMaxSequenceForClaudeSession(ctx, "nonexistent-session")
+		require.NoError(t, err)
+		require.Equal(t, 0, maxSeq)
+
+		// Test with existing events
+		maxSeq, err = store.GetMaxSequenceForClaudeSession(ctx, claudeSessionID)
+		require.NoError(t, err)
+		require.Equal(t, 4, maxSeq) // We added 4 events in ConversationEvents test
+
+		// Add another event and verify sequence increments
+		event := &ConversationEvent{
+			SessionID:       "test-session-1",
+			ClaudeSessionID: claudeSessionID,
+			EventType:       EventTypeMessage,
+			Role:            "user",
+			Content:         "Another message",
+		}
+		err = store.AddConversationEvent(ctx, event)
+		require.NoError(t, err)
+
+		maxSeq, err = store.GetMaxSequenceForClaudeSession(ctx, claudeSessionID)
+		require.NoError(t, err)
+		require.Equal(t, 5, maxSeq)
+
+		// Test with multiple sessions sharing same claude_session_id (v1.0.124+ behavior)
+		childSessionID := "test-session-child"
+		childSession := &Session{
+			ID:              childSessionID,
+			RunID:           "test-run-child",
+			ClaudeSessionID: claudeSessionID, // Same Claude ID as parent
+			ParentSessionID: "test-session-1",
+			Query:           "Continue with this",
+			Status:          SessionStatusRunning,
+			CreatedAt:       time.Now(),
+			LastActivityAt:  time.Now(),
+		}
+		err = store.CreateSession(ctx, childSession)
+		require.NoError(t, err)
+
+		// Add event from child session with same claude_session_id
+		childEvent := &ConversationEvent{
+			SessionID:       childSessionID,
+			ClaudeSessionID: claudeSessionID,
+			EventType:       EventTypeMessage,
+			Role:            "user",
+			Content:         "Child session message",
+		}
+		err = store.AddConversationEvent(ctx, childEvent)
+		require.NoError(t, err)
+
+		// Verify sequence continues from max across all sessions
+		require.Equal(t, 6, childEvent.Sequence)
+
+		maxSeq, err = store.GetMaxSequenceForClaudeSession(ctx, claudeSessionID)
+		require.NoError(t, err)
+		require.Equal(t, 6, maxSeq)
+	})
+
 	t.Run("MCPServers", func(t *testing.T) {
 		sessionID := "test-session-1"
 
