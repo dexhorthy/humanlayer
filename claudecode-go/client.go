@@ -301,6 +301,18 @@ func (c *Client) buildArgs(config SessionConfig) ([]string, error) {
 	return args, nil
 }
 
+// getClaudeBinaryPath returns the path to the Claude binary, checking override first
+func (c *Client) getClaudeBinaryPath() string {
+	// Check for override first
+	if override := os.Getenv("CODELAYER_CLAUDE_PATH"); override != "" {
+		log.Printf("Using Claude path override: %s", override)
+		return override
+	}
+
+	// Fall back to configured path
+	return c.claudePath
+}
+
 // Launch starts a new Claude session and returns immediately
 func (c *Client) Launch(config SessionConfig) (*Session, error) {
 	args, err := c.buildArgs(config)
@@ -308,8 +320,11 @@ func (c *Client) Launch(config SessionConfig) (*Session, error) {
 		return nil, err
 	}
 
-	log.Printf("Executing Claude command: %s %v", c.claudePath, args)
-	cmd := exec.Command(c.claudePath, args...)
+	// Get Claude binary path with override support
+	claudePath := c.getClaudeBinaryPath()
+
+	log.Printf("Executing Claude command: %s %v", claudePath, args)
+	cmd := exec.Command(claudePath, args...)
 
 	// Set environment variables if specified
 	if len(config.Env) > 0 {

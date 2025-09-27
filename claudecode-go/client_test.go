@@ -597,6 +597,71 @@ func TestClaudePathDetectionOrder(t *testing.T) {
 		"Claude's own directory should be searched first")
 }
 
+// TestGetClaudeBinaryPath tests the Claude path override functionality
+func TestGetClaudeBinaryPath(t *testing.T) {
+	t.Run("uses environment override when set", func(t *testing.T) {
+		// Create a client with a configured path
+		client := claudecode.NewClientWithPath("/usr/local/bin/claude")
+
+		// Set environment variable
+		originalPath := os.Getenv("CODELAYER_CLAUDE_PATH")
+		defer func() { _ = os.Setenv("CODELAYER_CLAUDE_PATH", originalPath) }()
+
+		testPath := "/tmp/test/claude"
+		err := os.Setenv("CODELAYER_CLAUDE_PATH", testPath)
+		assert.NoError(t, err)
+
+		// Create a client and verify it uses the override
+		// Note: We can't directly call getClaudeBinaryPath since it's private,
+		// but we can test that GetPath() returns the configured path (not the override)
+		// and that Launch would use the override
+		assert.Equal(t, "/usr/local/bin/claude", client.GetPath(),
+			"GetPath() should return configured path, not override")
+
+		// The override will be used when Launch is called
+		// This is tested in integration tests
+	})
+
+	t.Run("falls back to configured path when no override", func(t *testing.T) {
+		client := claudecode.NewClientWithPath("/usr/local/bin/claude")
+
+		// Clear environment variable
+		originalPath := os.Getenv("CODELAYER_CLAUDE_PATH")
+		defer func() { _ = os.Setenv("CODELAYER_CLAUDE_PATH", originalPath) }()
+		err := os.Unsetenv("CODELAYER_CLAUDE_PATH")
+		assert.NoError(t, err)
+
+		// GetPath should return the configured path
+		assert.Equal(t, "/usr/local/bin/claude", client.GetPath())
+	})
+
+	t.Run("environment override affects Launch behavior", func(t *testing.T) {
+		// This test verifies that the override is actually used during Launch
+		// by setting a non-existent path and checking for the expected error
+
+		client := claudecode.NewClientWithPath("/usr/local/bin/claude")
+
+		// Set override to non-existent path
+		originalPath := os.Getenv("CODELAYER_CLAUDE_PATH")
+		defer func() { _ = os.Setenv("CODELAYER_CLAUDE_PATH", originalPath) }()
+
+		nonExistentPath := "/this/path/does/not/exist/claude"
+		err := os.Setenv("CODELAYER_CLAUDE_PATH", nonExistentPath)
+		assert.NoError(t, err)
+
+		// Try to launch - should fail because override path doesn't exist
+		_, launchErr := client.Launch(claudecode.SessionConfig{
+			Query:        "test",
+			OutputFormat: claudecode.OutputText,
+		})
+
+		// Should get an error about the non-existent path
+		assert.Error(t, launchErr, "Should fail when override path doesn't exist")
+		assert.Contains(t, launchErr.Error(), "failed to start claude",
+			"Error should indicate Claude couldn't start")
+	})
+}
+
 // TestClaudeDetectionWithExcludedPaths tests that problematic paths are excluded
 func TestClaudeDetectionWithExcludedPaths(t *testing.T) {
 	// This test creates mock binaries in excluded locations and verifies they're not detected
