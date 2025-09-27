@@ -314,7 +314,8 @@ func TestSQLiteStore(t *testing.T) {
 		// List all sessions
 		sessions, err := store.ListSessions(ctx)
 		require.NoError(t, err)
-		require.Len(t, sessions, 2)
+		// Now expecting 3 sessions: test-session-1, test-session-child, and test-session-2
+		require.Len(t, sessions, 3)
 	})
 
 	t.Run("GetRecentWorkingDirs", func(t *testing.T) {

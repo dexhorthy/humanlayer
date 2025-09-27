@@ -217,6 +217,15 @@ func TestQueryInjectionRaceCondition(t *testing.T) {
 		// Store query
 		manager.pendingQueries.Store(sessionID, query)
 
+		// Expect GetSession to check if it's a continuation (new behavior)
+		mockStore.EXPECT().
+			GetSession(gomock.Any(), sessionID).
+			Return(&store.Session{
+				ID:              sessionID,
+				ClaudeSessionID: claudeSessionID,
+				// No ParentSessionID, so it's not a continuation
+			}, nil)
+
 		// Expect GetConversationEvents and AddConversationEvent for each session
 		mockStore.EXPECT().
 			GetConversation(gomock.Any(), claudeSessionID).
